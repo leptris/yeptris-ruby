@@ -102,6 +102,17 @@ module Yeptris
       # through sexagesimal to String.
       PSYCH_TRUE = %w[y yes true on].freeze
 
+      # '<<' merge: existing keys win; sequences merge in order.
+      # Shared by the record walk and the value-stream walk.
+      def merge_into(map, obj)
+        case obj
+        when Hash
+          obj.each { |k, v| map[k] = v unless map.key?(k) }
+        when Array
+          obj.each { |e| merge_into(map, e) if e.is_a?(Hash) }
+        end
+      end
+
       def parse_timestamp(v)
         return Date.parse(v) unless v.match?(/[Tt ]\d/)
 
@@ -212,18 +223,24 @@ module Yeptris
       # closes (inline `<<:` values), nil otherwise
       merge_target = []
 
+      # the arena is UTF-8 by construction (validated at parse), so
+      # forcing its encoding ONCE makes every slice UTF-8 for free —
+      # no per-scalar force_encoding
+      arena.force_encoding(Encoding::UTF_8)
+      # (each_slice DESTRUCTURING measured SLOWER than plain indexing
+      # here: it allocates a 12-slot Array per record. Index away.)
       i = 0
       n = flat.length
       while i < n
-        case flat[i]
+        type = flat[i]
+        case type
         when SCALAR
           # a plain, resolver-tagged '<<' (TAG_MERGE) merges; a
           # QUOTED '<<' is a literal key — Psych merges on the tag,
           # not the text
-          merge_key = flat[i + 3] == TAG_MERGE
+          tag_id = flat[i + 3]
           v = Materializer.scan_by_tag(
-            arena[flat[i + 6], flat[i + 7]].force_encoding(Encoding::UTF_8),
-            flat[i + 3], (flat[i + 2] & EF_IMPLICIT) != 0
+            arena[flat[i + 6], flat[i + 7]], tag_id, (flat[i + 2] & EF_IMPLICIT) != 0
           )
           l = flat[i + 9]
           anchors[arena[flat[i + 8], l]] = v if l != 0
@@ -236,7 +253,7 @@ module Yeptris
             if parent.is_a?(Hash)
               if (key = pending_key[-1]).nil?
                 pending_key[-1] = v
-                pending_key_merge[-1] = merge_key
+                pending_key_merge[-1] = flat[i + 3] == TAG_MERGE
               else
                 pending_key[-1] = nil
                 if pending_key_merge[-1]
@@ -251,24 +268,25 @@ module Yeptris
           end
         when MAPPING_START
           h = {}
-          remember_anchor(arena, flat, i, anchors, h)
+          l = flat[i + 9]
+          anchors[arena[flat[i + 8], l]] = h if l != 0
           merge_target.push(place(docs, stack, pending_key, pending_key_merge, h))
           stack.push(h)
           pending_key.push(nil)
           pending_key_merge.push(nil)
         when SEQUENCE_START
           a = []
-          remember_anchor(arena, flat, i, anchors, a)
+          l = flat[i + 9]
+          anchors[arena[flat[i + 8], l]] = a if l != 0
           merge_target.push(place(docs, stack, pending_key, pending_key_merge, a))
           stack.push(a)
           pending_key.push(nil)
           pending_key_merge.push(nil)
         when ALIAS
-          name = arena[flat[i + 6], flat[i + 7]].force_encoding(Encoding::UTF_8)
-          obj = anchors[name]
+          name = arena[flat[i + 6], flat[i + 7]]
           raise Yeptris::ParseError, "unknown anchor: #{name.inspect}" unless anchors.key?(name)
 
-          place(docs, stack, pending_key, pending_key_merge, obj)
+          place(docs, stack, pending_key, pending_key_merge, anchors[name])
         when MAPPING_END, SEQUENCE_END
           done = stack.pop
           pending_key.pop
@@ -316,20 +334,5 @@ module Yeptris
       end
     end
 
-    def merge_into(map, obj)
-      case obj
-      when Hash
-        obj.each { |k, v| map[k] = v unless map.key?(k) }
-      when Array
-        obj.each { |e| merge_into(map, e) if e.is_a?(Hash) }
-      end
-    end
-
-    def remember_anchor(arena, flat, i, anchors, obj)
-      l = flat[i + 9]
-      return if l.zero?
-
-      anchors[arena[flat[i + 8], l]] = obj
-    end
   end
 end

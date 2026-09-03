@@ -112,6 +112,12 @@ module Yeptris
     attach_function :yeptris_recorder_arena, %i[pointer pointer], :pointer
     attach_function :yeptris_recorder_free, [:pointer], :void
 
+    # value stream (TODO.impl/15 phase F): one drain of pre-converted
+    # typed values — the materialization fast path
+    attach_function :yeptris_value_drain,
+                    %i[pointer size_t int pointer pointer pointer pointer], :int
+    attach_function :yeptris_value_free, %i[pointer pointer], :void
+
     # bulk build (TODO.impl/15 phase D): one call raises a document
     BUILD_SCALAR = 1
     BUILD_SEQ = 2
