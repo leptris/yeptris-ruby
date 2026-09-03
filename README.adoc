@@ -1,0 +1,59 @@
+= yeptris — YAML for Ruby at libleptris speed
+
+An FFI-based (no C extension) Ruby YAML library over
+https://github.com/leptris/yeptris[libyeptris] — the YAML counterpart
+of libleptris. Psych-compatible semantics, one shared library, zero
+compilation at install.
+
+== Install (development)
+
+The native library is vendored in the platform gems (TODO.impl/15
+phase D). For development against a local build:
+
+....
+# the sibling C checkout: ~/src/leptris/yeptris
+cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_SHARED=ON
+cmake --build build
+
+cd ~/src/leptris/yeptris-ruby
+YEPTRIS_LIB_PATH=../yeptris/build/src/libyeptris.dylib bundle exec rspec
+....
+
+Without `YEPTRIS_LIB_PATH` the spec helper falls back to a vendored
+`lib/platform/<tag>/` copy, then to the sibling checkout's
+`build-validate` — any `libyeptris.{so,dylib,dll}` path works.
+
+== Usage
+
+[source,ruby]
+----
+require "yeptris"
+
+Yeptris::YAML.load("name: yeptris\nrating: 10\n")
+# => {"name" => "yeptris", "rating" => 10}
+
+Yeptris::YAML.dump("name" => "yeptris", tags: [:yaml, :fast])
+
+doc = Yeptris::Document.parse(config_yaml)
+doc.root["server"]["port"].to_i
+doc.serialize
+----
+
+`Yeptris::YAML.load` defaults to Psych's YAML 1.1 implicit typing
+(`yes` is `true`, `017` is octal); pass `schema: :core_12` for YAML
+1.2 core semantics. Dump builds through the library's DOM mutation
+API, so the writer's sizing/escape machinery applies to synthesized
+trees unchanged.
+
+Handles are document-scoped: `Document#free` releases everything
+(one C call), a GC finalizer backs it up, and any use after free
+raises `Yeptris::FreedError` — never a segfault.
+
+== Roadmap
+
+* Phase B: recorder-driven Ruby materialization (bulk event records,
+  the FFI tax paid per chunk, not per node) + the `Yeptris::Psych`
+  drop-in namespace and the ported Psych suite.
+* Phase C: `.tml` corpora, readonly mode, YAMLTree dumps.
+* Phase D: vendored precompiled platform gems, lockstep versioning
+  with the C library, symbol audit task.

@@ -1,0 +1,7 @@
+.bundle/
+pkg/
+tmp/
+Gemfile.lock
+libyeptris.*
+__pycache__/
+coverage/

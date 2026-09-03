@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  spec:
+    name: Spec on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        ruby: ["3.4"]
+    steps:
+      - name: Checkout binding
+        uses: actions/checkout@v4
+
+      - name: Checkout libyeptris (the C core)
+        uses: actions/checkout@v4
+        with:
+          repository: leptris/yeptris
+          path: libyeptris-src
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+
+      - name: Build shared library
+        run: |
+          cmake -B libyeptris-src/build -S libyeptris-src -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build
+
+      - name: Run binding specs
+        run: |
+          if [ "$(uname -s)" = "Darwin" ]; then
+            export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.dylib"
+          else
+            export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
+          fi
+          bundle exec rspec
