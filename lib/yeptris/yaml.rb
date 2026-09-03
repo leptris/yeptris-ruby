@@ -63,13 +63,22 @@ module Yeptris
 
       module_function
 
+      # container entries are constant bytes — no pack per op
+      MAP_ENTRY = [Yeptris::FFI::BUILD_MAP, 0, 0, 0].pack("CCx2VV").freeze
+      SEQ_ENTRY = [Yeptris::FFI::BUILD_SEQ, 0, 0, 0].pack("CCx2VV").freeze
+      END_ENTRY = [Yeptris::FFI::BUILD_END, 0, 0, 0].pack("CCx2VV").freeze
+      CONT_ENTRY = { Yeptris::FFI::BUILD_MAP => MAP_ENTRY,
+                     Yeptris::FFI::BUILD_SEQ => SEQ_ENTRY,
+                     Yeptris::FFI::BUILD_END => END_ENTRY }.freeze
+
       def dump(obj, canonical: false)
         parts = []
         blob = +""
         off = [0]
-        # one pack per entry: CC (op, style) x2 (reserved) VV (off, len)
+        # one pack per SCALAR; containers reuse frozen constants
         emit = lambda do |op, style, o, len|
-          parts << [op, style, o, len].pack("CCx2VV")
+          parts << (o.zero? && len.zero? && style.zero? ? CONT_ENTRY[op] :
+                      [op, style, o, len].pack("CCx2VV"))
         end
         place(obj, emit, blob, off, {})
         doc = Document.create
@@ -132,7 +141,15 @@ module Yeptris
       RESHAPES = %w[~ null Null NULL y Y yes Yes YES n N no No NO true True
                     TRUE false False FALSE on On ON off Off OFF <<].freeze
 
+      SAFE_WORD = /\A[A-Za-z][A-Za-z0-9_\-.\/ ]*\z/
+
       def plain_string?(s)
+        # fast lane: letter-started, safe characters incl. spaces — no
+        # number/timestamp/indicator shape is possible; only the
+        # reshape words need the set lookup
+        if SAFE_WORD.match?(s) && !s.end_with?(" ") && !RESHAPES.include?(s)
+          return true
+        end
         return false if s.empty? || s != s.strip
         return false if s.match?(/[\n\t]/)
         c = s[0]
