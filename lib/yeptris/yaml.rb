@@ -11,12 +11,12 @@ module Yeptris
     # schema: :compat_11 selects Psych/libyaml implicit typing
     # (yes/no, 0o/octal, sexagesimal); :core_12 (default) is YAML 1.2.
     def load(yaml, schema: :compat_11)
-      Materializer.load(yaml, schema: schema)
+      ValueML.load(yaml, schema: schema)
     end
 
     # Every document in the stream, in order.
     def load_stream(yaml, schema: :compat_11)
-      Materializer.load_stream(yaml, schema: schema)
+      ValueML.load_all(yaml, schema: schema)
     end
 
     # The Psych-suite port's spelling (spec/psych/): compat typing.
