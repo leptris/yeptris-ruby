@@ -118,6 +118,13 @@ class Yeptris::Document
     wrap_node(Yeptris::FFI.yeptris_document_root(@c_ptr, index))
   end
 
+  # Bulk build (TODO.impl/15 phase D): one call raises the whole
+  # tree from a flat entry array + blob (see YAML::BulkBuilder).
+  def build_entries(entries, count, blob, blob_len)
+    ensure_alive!
+    Yeptris::FFI.yeptris_document_build(@c_ptr, entries, count, blob, blob_len)
+  end
+
   def serialize(canonical: false, best_width: 0)
     ensure_alive!
     len = ::FFI::MemoryPointer.new(:uint64)

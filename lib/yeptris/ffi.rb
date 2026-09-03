@@ -112,6 +112,20 @@ module Yeptris
     attach_function :yeptris_recorder_arena, %i[pointer pointer], :pointer
     attach_function :yeptris_recorder_free, [:pointer], :void
 
+    # bulk build (TODO.impl/15 phase D): one call raises a document
+    BUILD_SCALAR = 1
+    BUILD_SEQ = 2
+    BUILD_MAP = 3
+    BUILD_END = 4
+
+    # the ABI-pinned shape; the bulk builder packs these bytes
+    # directly (12 per entry)
+    class BuildEntry < ::FFI::Struct
+      layout op: :uint8, style: :uint8, reserved: :uint16, off: :uint32, len: :uint32
+    end
+    attach_function :yeptris_document_build,
+                    %i[yeptris_document pointer size_t pointer size_t], :int
+
     attach_function :yeptris_serialize, %i[yeptris_document pointer], :pointer
     attach_function :yeptris_serialize_ex,
                     %i[yeptris_document pointer pointer], :pointer
