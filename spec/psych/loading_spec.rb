@@ -146,3 +146,11 @@ RSpec.describe "Psych port: strings" do
     expect(Yeptris::YAML.load(Yeptris::YAML.dump(""))).to eq("")
   end
 end
+
+RSpec.describe "Psych port: merge keys are tag-driven" do
+  it "merges a plain << but keeps a quoted '<<' literal" do
+    expect(Yeptris::YAML.load("a: 1\n<<: {b: 2}\n")).to eq("a" => 1, "b" => 2)
+    expect(Yeptris::YAML.load("a: 1\n'<<': {b: 2}\n")).to eq("a" => 1, "<<" => {"b" => 2})
+    expect(Yeptris::YAML.load("a: 1\n\"<<\": {b: 2}\n")).to eq("a" => 1, "<<" => {"b" => 2})
+  end
+end

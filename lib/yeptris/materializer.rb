@@ -37,6 +37,7 @@ module Yeptris
     TAG_BOOL = Yeptris::FFI::TAG_BOOL
     TAG_NULL = Yeptris::FFI::TAG_NULL
     TAG_TIMESTAMP = Yeptris::FFI::TAG_TIMESTAMP
+    TAG_MERGE = 9 # YEPTRIS_TAG_MERGE (resolve.h): a plain '<<' key
 
     INF_WORDS = {
       ".inf" => Float::INFINITY, ".Inf" => Float::INFINITY, ".INF" => Float::INFINITY,
@@ -206,6 +207,7 @@ module Yeptris
       stack = []
       anchors = {}
       pending_key = []
+      pending_key_merge = []
       # per open container: the map to merge into when this container
       # closes (inline `<<:` values), nil otherwise
       merge_target = []
@@ -215,6 +217,10 @@ module Yeptris
       while i < n
         case flat[i]
         when SCALAR
+          # a plain, resolver-tagged '<<' (TAG_MERGE) merges; a
+          # QUOTED '<<' is a literal key — Psych merges on the tag,
+          # not the text
+          merge_key = flat[i + 3] == TAG_MERGE
           v = Materializer.scan_by_tag(
             arena[flat[i + 6], flat[i + 7]].force_encoding(Encoding::UTF_8),
             flat[i + 3], (flat[i + 2] & EF_IMPLICIT) != 0
@@ -230,9 +236,10 @@ module Yeptris
             if parent.is_a?(Hash)
               if (key = pending_key[-1]).nil?
                 pending_key[-1] = v
+                pending_key_merge[-1] = merge_key
               else
                 pending_key[-1] = nil
-                if key.eql?("<<")
+                if pending_key_merge[-1]
                   merge_into(parent, v)
                 else
                   parent[key] = v
@@ -245,24 +252,27 @@ module Yeptris
         when MAPPING_START
           h = {}
           remember_anchor(arena, flat, i, anchors, h)
-          merge_target.push(place(docs, stack, pending_key, h))
+          merge_target.push(place(docs, stack, pending_key, pending_key_merge, h))
           stack.push(h)
           pending_key.push(nil)
+          pending_key_merge.push(nil)
         when SEQUENCE_START
           a = []
           remember_anchor(arena, flat, i, anchors, a)
-          merge_target.push(place(docs, stack, pending_key, a))
+          merge_target.push(place(docs, stack, pending_key, pending_key_merge, a))
           stack.push(a)
           pending_key.push(nil)
+          pending_key_merge.push(nil)
         when ALIAS
           name = arena[flat[i + 6], flat[i + 7]].force_encoding(Encoding::UTF_8)
           obj = anchors[name]
           raise Yeptris::ParseError, "unknown anchor: #{name.inspect}" unless anchors.key?(name)
 
-          place(docs, stack, pending_key, obj)
+          place(docs, stack, pending_key, pending_key_merge, obj)
         when MAPPING_END, SEQUENCE_END
           done = stack.pop
           pending_key.pop
+          pending_key_merge.pop
           target = merge_target.pop
           merge_into(target, done) if target
         when DOCUMENT_START
@@ -279,7 +289,7 @@ module Yeptris
     # "<<" key — the caller defers the merge to the container's END
     # (an inline map's contents arrive after its start event); scalar
     # and alias merges apply immediately.
-    def place(docs, stack, pending_key, obj)
+    def place(docs, stack, pending_key, pending_key_merge, obj)
       if stack.empty?
         docs[-1] = obj
         return nil
@@ -288,11 +298,12 @@ module Yeptris
       if parent.is_a?(Hash)
         if pending_key.last.nil?
           pending_key[-1] = obj
+          pending_key_merge[-1] = false
           return nil
         end
         key = pending_key.last
         pending_key[-1] = nil
-        if merge_key?(key)
+        if pending_key_merge[-1]
           merge_into(parent, obj)
           parent
         else
@@ -303,10 +314,6 @@ module Yeptris
         parent.push(obj)
         nil
       end
-    end
-
-    def merge_key?(key)
-      key.is_a?(String) && key == "<<"
     end
 
     def merge_into(map, obj)
