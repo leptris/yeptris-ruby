@@ -225,6 +225,32 @@ module Yeptris
       i = 0
       n = kinds.length
       while i < n
+        # the dominant shape: a str:str pair inside one map — place
+        # both directly, same conversions as the STR arm (the ':sym'
+        # scan rides is_key's text; anchors/merges fall through)
+        if kinds[i] == V_STR && ikeys[i] == 1 && i + 1 < n &&
+           kinds[i + 1] == V_STR && ikeys[i + 1] == 0 &&
+           pending_anchor.nil? && !stack.empty? && stack.last.is_a?(Hash)
+          kt = arena.byteslice(offs[i], lens[i])
+          if kt != "<<"
+            key = if bools[i] == 1 && kt.length > 1 && kt.start_with?(":") &&
+                     !kt.start_with?("::")
+              kt[1..].to_sym
+            else
+              kt
+            end
+            vt = arena.byteslice(offs[i + 1], lens[i + 1])
+            stack.last[key] =
+              if bools[i + 1] == 1 && vt.length > 1 && vt.start_with?(":") &&
+                 !vt.start_with?("::")
+                vt[1..].to_sym
+              else
+                vt
+              end
+            i += 2
+            next
+          end
+        end
         case kinds[i]
         when V_STR
           text = arena.byteslice(offs[i], lens[i])

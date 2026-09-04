@@ -154,3 +154,27 @@ RSpec.describe "Psych port: merge keys are tag-driven" do
     expect(Yeptris::YAML.load("a: 1\n\"<<\": {b: 2}\n")).to eq("a" => 1, "<<" => {"b" => 2})
   end
 end
+
+RSpec.describe "Psych port: timestamp parity" do
+  before(:all) { require "yeptris/psych" }
+
+  # Psych reads NAIVE timestamps (no zone) as UTC instants expressed
+  # in the local zone; " Z" normalizes; date-only stays Date. One real
+  # bug lived here: naive times were read as LOCAL (an hour off in
+  # this zone) and " Z" fell back to String.
+  [
+    "2001-12-14 21:59:43",          # naive -> UTC instant, local zone
+    "2001-12-14t21:59:43.10",       # naive with fraction
+    "2001-12-14 21:59:43 Z",        # space-Z -> true UTC Time
+    "2001-12-14 21:59:43.10 Z",
+    "2001-12-14t21:59:43Z",         # attached Z
+    "2001-12-14T21:59:43.5",        # bare fraction, naive
+    "2001-12-14t21:59:43.10-05:00", # explicit offset
+    "2001-12-14 21:59:43.10 -05:00",# space offset
+    "2001-12-14",                   # date-only -> Date
+  ].each do |text|
+    it "matches Psych on #{text.inspect}" do
+      expect(Yeptris::YAML.load(text)).to eq(Psych.unsafe_load(text))
+    end
+  end
+end
