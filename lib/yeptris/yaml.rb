@@ -11,12 +11,24 @@ module Yeptris
     # schema: :compat_11 selects Psych/libyaml implicit typing
     # (yes/no, 0o/octal, sexagesimal); :core_12 (default) is YAML 1.2.
     def load(yaml, schema: :compat_11)
-      ValueML.load(yaml, schema: schema)
+      docs = _drain_all(yaml, schema)
+      docs.empty? ? nil : docs.first
     end
 
     # Every document in the stream, in order.
     def load_stream(yaml, schema: :compat_11)
-      ValueML.load_all(yaml, schema: schema)
+      _drain_all(yaml, schema)
+    end
+
+    # The columnar drain when the loaded libyeptris has it (>= 0.1.2
+    # era builds), the record drain otherwise — one code path, the
+    # fastest the library offers.
+    def _drain_all(yaml, schema)
+      if FFI::COLUMNS
+        ValueML.load_all_columns(yaml, schema: schema)
+      else
+        ValueML.load_all(yaml, schema: schema)
+      end
     end
 
     # The Psych-suite port's spelling (spec/psych/): compat typing.
