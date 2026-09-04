@@ -118,6 +118,24 @@ module Yeptris
                     %i[pointer size_t int pointer pointer pointer pointer], :int
     attach_function :yeptris_value_free, %i[pointer pointer], :void
 
+    # Columnar drain (libyeptris > 0.1.1): the same stream as parallel
+    # typed buffers, one carved allocation. Feature-detected — the
+    # record API is the fallback on older libraries.
+    COLUMNS = begin
+      attach_function :yeptris_value_drain_columns, %i[pointer size_t int pointer], :int
+      attach_function :yeptris_value_free_columns, [:pointer], :void
+      true
+    rescue ::FFI::NotFoundError
+      false
+    end
+
+    class ValueColumns < ::FFI::Struct
+      layout :count, :size_t, :arena_len, :size_t,
+             :payloads, :pointer, :offs, :pointer, :lens, :pointer,
+             :kinds, :pointer, :tags, :pointer, :is_keys, :pointer,
+             :bools, :pointer, :arena, :pointer
+    end
+
     # bulk build (TODO.impl/15 phase D): one call raises a document
     BUILD_SCALAR = 1
     BUILD_SEQ = 2
