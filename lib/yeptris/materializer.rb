@@ -120,7 +120,16 @@ module Yeptris
         # xmlschema: "2001-12-14 21:59:43.10 -05:00" ->
         # "2001-12-14T21:59:43.10-05:00" (Psych's scanner does the
         # same dance)
-        Time.xmlschema(v.sub(/ (\d)/, 'T\1').sub(/ ([+-]\d)/, '\1'))
+        ts = v.sub(/ (\d)/, 'T\1').sub(/ ([+-]\d)/, '\1').sub(/ +Z\z/i, 'Z')
+        # Psych reads a NAIVE timestamp (no zone, no Z) as a UTC
+        # instant expressed in the local zone — one wall-clock hour
+        # off from reading it as local time (pinned by spec against
+        # Psych.unsafe_load across tz shapes)
+        if ts.match?(/(Z|[+-]\d\d:?\d\d)\z/i)
+          Time.xmlschema(ts)
+        else
+          Time.xmlschema(ts + "Z").getlocal
+        end
       rescue ArgumentError
         v
       end
