@@ -152,6 +152,9 @@ module Yeptris
       # verdicts by the differential spec (spec/yaml_spec.rb).
       RESHAPES = %w[~ null Null NULL y Y yes Yes YES n N no No NO true True
                     TRUE false False FALSE on On ON off Off OFF <<].freeze
+      # the fast lane consults the reshape table per string: an Array
+      # scan of 36 words was ~a third of the whole dump walk
+      RESHAPES_SET = RESHAPES.each_with_object({}) { |w, h| h[w] = true }.freeze
 
       SAFE_WORD = /\A[A-Za-z][A-Za-z0-9_\-.\/ ]*\z/
 
@@ -159,7 +162,7 @@ module Yeptris
         # fast lane: letter-started, safe characters incl. spaces — no
         # number/timestamp/indicator shape is possible; only the
         # reshape words need the set lookup
-        if SAFE_WORD.match?(s) && !s.end_with?(" ") && !RESHAPES.include?(s)
+        if SAFE_WORD.match?(s) && !s.end_with?(" ") && !RESHAPES_SET[s]
           return true
         end
         return false if s.empty? || s != s.strip
@@ -168,7 +171,7 @@ module Yeptris
         return false if "#,[]{}&*!|>'\"%@`".include?(c)
         return false if "-?:".include?(c) && (s.length == 1 || s[1] =~ /[ \t]/)
         return false if s.include?(": ") || s.end_with?(":") || s.include?(" #")
-        return false if RESHAPES.include?(s)
+        return false if RESHAPES_SET[s]
         # compat's float grammar REQUIRES the dot ("1e3" re-reads as a
         # String and may dump plain); ints/sexagesimals still reshape
         return false if s.match?(/\A[-+]?(0|[1-9][0-9_]*)(:[0-5]?[0-9])+\z/)
