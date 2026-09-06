@@ -7,8 +7,9 @@ compilation at install.
 
 == Install (development)
 
-The native library is vendored in the platform gems (TODO.impl/15
-phase D). For development against a local build:
+The gem loads a shared `libyeptris` — from `YEPTRIS_LIB_PATH`, a
+vendored `lib/platform/<tag>/` copy, or the system paths. For
+development against a local build:
 
 ....
 # the sibling C checkout: ~/src/leptris/yeptris
@@ -32,7 +33,9 @@ require "yeptris"
 Yeptris::YAML.load("name: yeptris\nrating: 10\n")
 # => {"name" => "yeptris", "rating" => 10}
 
-Yeptris::YAML.dump("name" => "yeptris", tags: [:yaml, :fast])
+# brace mixed hashes on Ruby 3.x: a trailing symbol key otherwise
+# splits the literal into keywords
+Yeptris::YAML.dump({"name" => "yeptris", "tags" => [:yaml, :fast]})
 
 doc = Yeptris::Document.parse(config_yaml)
 doc.root["server"]["port"].to_i
@@ -49,11 +52,14 @@ Handles are document-scoped: `Document#free` releases everything
 (one C call), a GC finalizer backs it up, and any use after free
 raises `Yeptris::FreedError` — never a segfault.
 
-== Roadmap
+== Shipped beyond the original plan
 
-* Phase B: recorder-driven Ruby materialization (bulk event records,
-  the FFI tax paid per chunk, not per node) + the `Yeptris::Psych`
-  drop-in namespace and the ported Psych suite.
-* Phase C: `.tml` corpora, readonly mode, YAMLTree dumps.
-* Phase D: vendored precompiled platform gems, lockstep versioning
-  with the C library, symbol audit task.
+* The columnar value drain (bulk, pre-converted typed columns — the
+  load fast path) and the bulk DOM builder (one `document_build`
+  call per dump).
+* `Yeptris::Psych` — the drop-in namespace with the ported Psych
+  suite (143 specs), `.tml` corpora conformance, and the object
+  visitor (`encode_with`/`init_with`).
+* Lockstep versioning with the C library
+  (`{c-semver}.{gem-patch}`); releases published from the C repo's
+  workflow through the RubyGems trusted publisher.
