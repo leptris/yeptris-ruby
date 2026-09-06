@@ -3,14 +3,44 @@
 require "yeptris/version"
 
 module Yeptris
-  # eager: nested constants (Yeptris::ParseError etc.) do NOT trigger
-  # a parent-constant autoload, so the error hierarchy loads up front
-  require_relative "yeptris/error"
+  # The error hierarchy lives in THIS file (the parent namespace's
+  # own file): nested constants do not trigger a parent-constant
+  # autoload, and the law forbids internal requires — defining the
+  # hierarchy here makes it eager by construction.
+
+  # The base error for everything this library raises deliberately.
+  class Error < StandardError; end
+
+  # The input is not valid YAML (or valid for the requested mode).
+  # message carries the C parser's line/column detail.
+  class ParseError < Error; end
+
+  # A handle was used after its document was freed. Raised, never a
+  # segfault: the Document is the sole C-memory owner and every Node
+  # checks liveness through it.
+  class FreedError < Error; end
+
+  # Building a document from a Ruby object graph hit something the
+  # builder refuses (cycles, unsupported objects).
+  class DumpError < Error; end
+
+  # Input coercion — the ONE place the input boundary is typed
+  # (no respond_to? duck-probing): IO-like objects read, Strings
+  # pass through, anything else must be stringable and is.
+  def self.read_input(source)
+    case source
+    when String then source
+    when IO, StringIO then source.read
+    else source.to_s
+    end
+  end
+
   autoload :Document, "yeptris/document"
   autoload :Node, "yeptris/node"
   autoload :YAML, "yeptris/yaml"
   autoload :Materializer, "yeptris/materializer"
   autoload :ValueML, "yeptris/valueml"
+  autoload :Psych, "yeptris/psych"
 end
 
 # Eager native-library resolution (leptris-ruby lesson): fail at

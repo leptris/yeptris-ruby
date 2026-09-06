@@ -1,11 +1,5 @@
 # frozen_string_literal: true
 
-require "yeptris"
-require "yeptris/psych/handler"
-require "yeptris/psych/parser"
-require "yeptris/psych/coder_shim"
-require "yeptris/psych/visitors"
-
 # The Psych drop-in namespace (TODO.impl/15 phase C).
 #
 # `require "yeptris/psych"` rebinds the top-level Psych constant to
@@ -17,6 +11,15 @@ require "yeptris/psych/visitors"
 # document without materializing.
 module Yeptris
   module Psych
+    # Children load via autoload declared HERE — the immediate parent
+    # namespace's file (never internal requires).
+    autoload :Handler, "yeptris/psych/handler"
+    # Handlers (the Recorder submodule) lives in handler.rb too — its
+    # own entry so referencing Psych::Handlers triggers the load
+    autoload :Handlers, "yeptris/psych/handler"
+    autoload :Parser, "yeptris/psych/parser"
+    autoload :CoderShim, "yeptris/psych/coder_shim"
+    autoload :Visitors, "yeptris/psych/visitors"
     class Error < StandardError; end
     class SyntaxError < Error
       attr_reader :line, :column
