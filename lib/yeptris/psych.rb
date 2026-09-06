@@ -326,5 +326,8 @@ if defined?(::Psych) && !::Psych.equal?(Yeptris::Psych) &&
    !Yeptris::Psych.const_defined?(:ORIGINAL, false)
   Yeptris::Psych.const_set(:ORIGINAL, ::Psych)
 end
-Object.send(:remove_const, :Psych) if defined?(::Psych)
+# class_eval reaches Module-private methods WITHOUT send (the law:
+# no send to private methods); remove_const has no public form, and
+        # the rebind is this namespace's whole purpose
+        Object.class_eval { remove_const(:Psych) } if defined?(::Psych)
 ::Psych = Yeptris::Psych
