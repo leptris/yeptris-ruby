@@ -85,7 +85,7 @@ module Yeptris
 
       def dump(obj, canonical: false)
         parts = []
-        blob = +""
+        blob = String.new(encoding: Encoding::BINARY)
         off = [0]
         # one pack per SCALAR; containers reuse frozen constants
         emit = lambda do |op, style, o, len|
@@ -134,10 +134,13 @@ module Yeptris
       end
 
       def scalar(text, plain, emit, blob, off)
-        bytes = text.b
-        emit.call(SCALAR, plain ? STYLE_PLAIN : STYLE_DQ, off[0], bytes.bytesize)
-        blob << bytes
-        off[0] += bytes.bytesize
+        # a BINARY blob absorbs any String bytewise (String#<< on
+        # ASCII-8BIT is compatible with every encoding) — the old
+        # text.b made a throwaway copy of every scalar before the
+        # blob's own copy
+        emit.call(SCALAR, plain ? STYLE_PLAIN : STYLE_DQ, off[0], text.bytesize)
+        blob << text
+        off[0] += text.bytesize
       end
 
       def key_text(k)
