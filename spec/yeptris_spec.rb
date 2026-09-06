@@ -208,3 +208,29 @@ RSpec.describe Yeptris::YAML do
     expect(described_class.load("ok: yes\n")).to eq("ok" => true)
   end
 end
+
+require "stringio"
+
+RSpec.describe "Yeptris.read_input (the typed input boundary)" do
+  before(:all) { require "yeptris" }
+
+  it "passes Strings through unchanged" do
+    s = "k: v"
+    expect(Yeptris.read_input(s)).to equal(s)
+  end
+
+  it "reads IO objects" do
+    expect(Yeptris.read_input(StringIO.new("k: v"))).to eq("k: v")
+    expect(Yeptris.read_input(File.open(__FILE__))).to start_with("#")
+  end
+
+  it "stringifies anything else (the documented fallback)" do
+    expect(Yeptris.read_input(:sym)).to eq("sym")
+    expect(Yeptris.read_input(42)).to eq("42")
+  end
+
+  it "feeds every entry point" do
+    expect(Yeptris::YAML.load(StringIO.new("k: v"))).to eq("k" => "v")
+    expect(Yeptris::Document.parse(StringIO.new("k: v")).document_count).to eq(1)
+  end
+end

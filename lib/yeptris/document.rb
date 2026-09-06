@@ -20,7 +20,7 @@ class Yeptris::Document
   end
 
   def self.parse(yaml, schema: :core_12, max_depth: 0)
-    yaml = yaml.read if yaml.respond_to?(:read)
+    yaml = Yeptris.read_input(yaml)
     yaml = yaml.to_s
     doc =
       if schema == :core_12 && max_depth.zero?
@@ -41,7 +41,7 @@ class Yeptris::Document
   end
 
   def self.parse_json(json)
-    json = json.read if json.respond_to?(:read)
+    json = Yeptris.read_input(json)
     json = json.to_s
     doc = Yeptris::FFI.yeptris_parse_json(json, json.bytesize, nil)
     raise Yeptris::ParseError,

@@ -21,7 +21,7 @@ module Yeptris
       end
 
       def parse(yaml, filename = nil)
-        yaml = yaml.read if yaml.respond_to?(:read)
+        yaml = Yeptris.read_input(yaml)
         yaml = yaml.to_s
         @filename = filename
         flat, arena = Materializer.drain(yaml, schema: :compat_11)

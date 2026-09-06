@@ -205,7 +205,7 @@ module Yeptris
     end
 
     def materialize(yaml)
-      yaml = yaml.read if yaml.respond_to?(:read)
+      yaml = Yeptris.read_input(yaml)
       yaml = yaml.to_s
       flat, arena = Materializer.drain(yaml, schema: @schema)
       walk(flat, arena)

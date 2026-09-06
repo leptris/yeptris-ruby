@@ -29,7 +29,7 @@ module Yeptris
     module_function
 
     def load_all(yaml, schema: :compat_11)
-      yaml = yaml.read if yaml.respond_to?(:read)
+      yaml = Yeptris.read_input(yaml)
       yaml = yaml.to_s
       vals_p = ::FFI::MemoryPointer.new(:pointer)
       count_p = ::FFI::MemoryPointer.new(:uint64)
@@ -60,7 +60,7 @@ module Yeptris
     # Semantics are IDENTICAL to the record walk — the two bodies are
     # maintained in lockstep; field-access shape is the only difference.
     def load_all_columns(yaml, schema: :compat_11)
-      yaml = yaml.read if yaml.respond_to?(:read)
+      yaml = Yeptris.read_input(yaml)
       yaml = yaml.to_s
       cols = FFI::ValueColumns.new
       st = FFI.yeptris_value_drain_columns(
