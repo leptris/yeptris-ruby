@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 
 RSpec.describe "BulkBuilder.plain_string? mirrors the LOADING schema" do
   it "plain exactly when compat_11 re-reads the text as a String" do
