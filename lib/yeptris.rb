@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 
-require "yeptris/version"
-
 module Yeptris
+  # The gem's version lives in the parent namespace's file — the last
+  # internal require (yeptris/version) retired with it.
+  VERSION = "0.1.9.0".freeze
   # The error hierarchy lives in THIS file (the parent namespace's
   # own file): nested constants do not trigger a parent-constant
   # autoload, and the law forbids internal requires — defining the

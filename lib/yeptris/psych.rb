@@ -86,7 +86,7 @@ module Yeptris
         (0...doc.document_count).each do |i|
           stream.children << Nodes::Builder.document_stream_child(doc, i)
         end
-        stream.instance_variable_set(:@owner, doc)
+        stream.owner = doc
         ObjectSpace.define_finalizer(
           stream, proc { doc.free unless doc.freed? }
         )
@@ -164,10 +164,22 @@ module Yeptris
 
         attr_reader :children
         attr_reader :handle # @api private — the Yeptris::Node
+        # @api private — the tree builder attaches handles; a writer,
+        # never instance_variable_set from outside
+        attr_writer :handle
+        # The Document owning this tree's C memory; a plain writer —
+        # never instance_variable_set from outside (encapsulation law).
+        attr_accessor :owner
 
         def initialize(handle = nil, children = [])
           @handle = handle
           @children = children
+        end
+
+        # Every node HAS an anchor concept (none by default) — the
+        # anchored search needs no type probe, just the model.
+        def anchor
+          nil
         end
 
         def each(&block)
@@ -272,7 +284,7 @@ module Yeptris
         def document_stream_child(doc, index)
           root = doc.root(index)
           d = Document.new
-          d.instance_variable_set(:@handle, root&.document)
+          d.handle = root&.document
           d.children << node(root) if root
           d
         end
@@ -285,21 +297,21 @@ module Yeptris
               m.children << node(k)
               m.children << node(v)
             end
-            m.instance_variable_set(:@handle, n)
+            m.handle = n
             m
           when :sequence
             s = Sequence.new(anchor: n.anchor, tag: n.tag)
             n.each { |e| s.children << node(e) }
-            s.instance_variable_set(:@handle, n)
+            s.handle = n
             s
           when :alias
             a = Alias.new(n.value)
-            a.instance_variable_set(:@handle, n)
+            a.handle = n
             a
           else
             sc = Scalar.new(n.value, anchor: n.anchor, tag: n.tag,
                                   plain: n.style == :plain, style: n.style)
-            sc.instance_variable_set(:@handle, n)
+            sc.handle = n
             sc
           end
         end

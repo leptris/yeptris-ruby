@@ -253,7 +253,7 @@ module Yeptris
         end
 
         def find_anchored(node, name)
-          return node if node.respond_to?(:anchor) && node.anchor == name
+          return node if node.anchor == name
 
           node.children.each do |c|
             found = find_anchored(c, name)
