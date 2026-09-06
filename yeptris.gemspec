@@ -2,11 +2,16 @@
 
 lib = File.expand_path("lib", __dir__)
 $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
-require "yeptris"
+# The gemspec is evaluated by bundle BEFORE dependencies install, so
+# it must not require the library (the ffi chain would explode). The
+# version has ONE source — the parent namespace's file — read as text.
+version = File.read(File.expand_path("lib/yeptris.rb", __dir__))
+  .match(/\sVERSION\s=\s"([^"]+)"/)&.captures&.first
+raise "VERSION not found in lib/yeptris.rb" unless version
 
 Gem::Specification.new do |spec|
   spec.name = "yeptris"
-  spec.version = Yeptris::VERSION
+  spec.version = version
   spec.authors = ["Ribose Inc."]
   spec.email = ["open.source@ribose.com"]
 
