@@ -75,9 +75,12 @@ modes.each do |mode|
               mode.to_s, "", y_min * 1e3, y_med * 1e3, y_mean * 1e3, y_mean / j_mean, wins, N)
   puts format("%-10s json   %-8s %7.3f %8.3f %8.3f   p10/p50/p90 %.2f/%.2f/%.2f",
               "", "", j_min * 1e3, j_med * 1e3, j_mean * 1e3, p10, p50, p90)
-  if ENV["GATE"] && (y_mean / j_mean) >= ENV["GATE"].to_f
-    warn(format("GATE FAILED: mean ratio %.3fx >= %s", y_mean / j_mean, ENV["GATE"]))
-    exit 1
+  gate = ENV["GATE"].to_s
+  unless gate.empty?
+    if (y_mean / j_mean) >= gate.to_f
+      warn(format("GATE FAILED: mean ratio %.3fx >= %s", y_mean / j_mean, gate))
+      exit 1
+    end
   end
   # GC footprint per parser, attribution-clean (one parser per phase):
   # the page hypothesis (TODO.restructure/34) predicts the disable
