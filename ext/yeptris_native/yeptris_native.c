@@ -322,6 +322,32 @@ static VALUE native_load_stream(VALUE self, VALUE input, VALUE schema) {
     return ctx_result(&s.inner, st == YEPTRIS_OK ? YEPTRIS_ERROR_INTERNAL : st);
 }
 
+/* GC-strategy surface (TODO.restructure/34): ENV at load sets the
+ * default; the setter re-picks at runtime so the CI referee can A/B
+ * in-process. Symbols: :disable, :none, :start. */
+extern int yep_rb_gc_mode(void);
+extern void yep_rb_set_gc_mode(int mode);
+
+static VALUE native_gc_mode(VALUE self) {
+    (void)self;
+    switch (yep_rb_gc_mode()) {
+    case 1: return ID2SYM(rb_intern("none"));
+    case 2: return ID2SYM(rb_intern("start"));
+    default: return ID2SYM(rb_intern("disable"));
+    }
+}
+
+static VALUE native_gc_mode_set(VALUE self, VALUE mode) {
+    (void)self;
+    Check_Type(mode, T_SYMBOL);
+    ID id = rb_sym2id(mode);
+    if (id == rb_intern("disable")) yep_rb_set_gc_mode(0);
+    else if (id == rb_intern("none")) yep_rb_set_gc_mode(1);
+    else if (id == rb_intern("start")) yep_rb_set_gc_mode(2);
+    else rb_raise(rb_eArgError, "gc_mode must be :disable, :none, or :start");
+    return mode;
+}
+
 RUBY_FUNC_EXPORTED void Init_native(void) {
     utf8_enc = rb_utf8_encoding();
     VALUE mYep = rb_define_module("Yeptris");
@@ -329,5 +355,10 @@ RUBY_FUNC_EXPORTED void Init_native(void) {
     rb_define_singleton_method(mNat, "load_json", native_load_json, 1);
     rb_define_singleton_method(mNat, "load", native_load, 2);
     rb_define_singleton_method(mNat, "load_stream", native_load_stream, 2);
+    rb_define_singleton_method(mNat, "gc_mode", native_gc_mode, 0);
+    rb_define_singleton_method(mNat, "gc_mode=", native_gc_mode_set, 1);
     rb_define_const(mNat, "AVAILABLE", Qtrue);
+    const char* env = getenv("YEPTRIS_NATIVE_GC");
+    if (env != NULL && strcmp(env, "none") == 0) yep_rb_set_gc_mode(1);
+    else if (env != NULL && strcmp(env, "start") == 0) yep_rb_set_gc_mode(2);
 }

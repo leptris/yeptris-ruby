@@ -205,16 +205,39 @@ static VALUE jr_value(jr* j) {
     j->err = -2; return Qnil;
 }
 
+/* GC strategy for the parse window (TODO.restructure/34): JSON.parse
+ * pays minor GCs mid-parse and recycles slots continuously; a blanket
+ * disable defers every collection — fresh pages each iteration, which
+ * is cheap idle and expensive exactly under memory contention (the
+ * loaded-box regression). The strategy is a runtime choice so the CI
+ * referee can A/B without rebuilds:
+ *   disable (default) — pause GC for the window
+ *   none               — never pause
+ *   start              — pause, then one gc_start before returning
+ *                        (pay the minor GC in-window, like JSON.parse)
+ */
+enum { YEP_GC_DISABLE = 0, YEP_GC_NONE = 1, YEP_GC_START = 2 };
+static int yep_gc_mode = YEP_GC_DISABLE;
+
+int yep_rb_gc_mode(void) { return yep_gc_mode; }
+void yep_rb_set_gc_mode(int mode) {
+    if (mode >= YEP_GC_DISABLE && mode <= YEP_GC_START) {
+        yep_gc_mode = mode;
+    }
+}
+
 VALUE yep_rb_parse_json(const char* p, size_t len) {
     jr j;
     memset(&j, 0, sizeof(j));
     j.p = p; j.len = len; j.enc = rb_utf8_encoding();
-    VALUE already = rb_gc_disable();
+    VALUE already = Qtrue;
+    if (yep_gc_mode != YEP_GC_NONE) already = rb_gc_disable();
     VALUE v = jr_value(&j);
     jr_ws(&j);
     if (j.i != len && j.err == 0) j.err = -2;
     free(j.scratch);
     if (already == Qfalse) rb_gc_enable();
+    if (yep_gc_mode == YEP_GC_START && j.err == 0) rb_gc_start();
     if (j.err == -1) rb_raise(rb_eNoMemError, "yeptris native json");
     if (j.err != 0) rb_raise(rb_path2class("Yeptris::ParseError"), "native json parse failed");
     return v;
