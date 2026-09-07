@@ -47,14 +47,18 @@ enum { YEP_CACHE_ON = 0, YEP_CACHE_OFF = 1 };
 static int yep_cache_mode = YEP_CACHE_ON;
 
 static uint64_t jr_hash(const char* sp, long sl) {
-    /* FNV-1a 64 — cheap, good enough for short keys */
-    uint64_t h = 14695981039346656037ull;
-    for (long i = 0; i < sl; i++) {
-        h ^= (unsigned char)sp[i];
-        h *= 1099511628211ull;
-    }
-    h ^= (uint64_t)sl;
-    return h;
+    /* 8-byte-prefix key (the leptris nametab trick): one safe load
+     * of min(8, len) bytes + a multiply mix. Replaced byte-wise FNV
+     * (~15-20ns per token on the cached path, ~15k tokens per
+     * reference-corpus parse - the x86 materialization cost the
+     * decomposition isolated, TODO.restructure/37/38). */
+    uint64_t k = 0;
+    uint64_t take = (uint64_t)sl < 8 ? (uint64_t)sl : 8;
+    memcpy(&k, sp, (size_t)take);
+    k ^= (uint64_t)sl * 0x9E3779B97F4A7C15ull;
+    k *= 0xC2B2AE3D27D4EB4Full;
+    k ^= k >> 29;
+    return k;
 }
 
 static VALUE jr_cached(jr* j, const char* sp, long sl) {
