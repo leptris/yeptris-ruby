@@ -72,9 +72,9 @@ fastest first:
 +
 ....
 CI referee (gated at 1.05 on both platforms, order-alternating
-interleave, N=200):
-  ubuntu (x86_64, gc=disable)   mean 0.961x  vs JSON.parse
-  macos  (arm64,  gc=none)      mean 0.718x  (head-to-head 173/200)
+interleave, N=200; prefix-hashed token cache):
+  ubuntu (x86_64)   mean 0.745x  vs JSON.parse, 200/200 head-to-head
+  macos  (arm64)    mean 0.759x  vs JSON.parse, 169/200 head-to-head
 ....
 
 The parse-window GC strategy is per-arch and runtime-switchable:
