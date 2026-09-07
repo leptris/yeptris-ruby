@@ -10,16 +10,14 @@ module Yeptris
     # Loads the FIRST document of a YAML stream as native Ruby objects.
     # schema: :compat_11 selects Psych/libyaml implicit typing
     # (yes/no, 0o/octal, sexagesimal); :core_12 (default) is YAML 1.2.
+    #
+    # This surface keeps the Psych contract for EVERY input — including
+    # JSON-shaped ones (`{"a": [1,]}` is legal flow YAML; `"1e3"` is a
+    # Psych String). Strict RFC 8259 semantics live on Yeptris::JSON
+    # (TODO.restructure/31): defaults follow proof, not benchmarks.
     def load(yaml, schema: :compat_11)
       yaml = Yeptris.read_input(yaml)
       yaml = yaml.to_s
-      # The native C materializer fuses strict-JSON scan→VALUE in one
-      # pass (beats JSON.parse on the 152 KB corpus). YAML inputs keep
-      # the FFI ladder so timestamps, aliases, and Psych's scalar
-      # quirks all resolve through the same path Psych.load uses.
-      if defined?(Yeptris::Native) && native_json?(yaml)
-        return Yeptris::Native.load_json(yaml)
-      end
       docs = _drain_all(yaml, schema)
       docs.empty? ? nil : docs.first
     end
@@ -30,22 +28,6 @@ module Yeptris
       yaml = yaml.to_s
       _drain_all(yaml, schema)
     end
-
-    # Strict-JSON sniff: first non-space is { or [ — the fused native
-    # path beats JSON.parse on this shape (TODO.restructure/22).
-    def native_json?(bytes)
-      i = 0
-      len = bytes.bytesize
-      while i < len
-        c = bytes.getbyte(i)
-        return true if c == 0x7b || c == 0x5b # { or [
-        return false unless c == 0x20 || c == 0x09 || c == 0x0a || c == 0x0d
-
-        i += 1
-      end
-      false
-    end
-    private_class_method :native_json?
 
     # The Marshal fast path when the loaded libyeptris has it (>= 0.1.11
     # era builds), falling back to the columnar drain and finally the

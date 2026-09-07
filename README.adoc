@@ -52,9 +52,37 @@ Handles are document-scoped: `Document#free` releases everything
 (one C call), a GC finalizer backs it up, and any use after free
 raises `Yeptris::FreedError` — never a segfault.
 
-== Native materializer (opt-in): faster than JSON.parse
+== Two load surfaces: YAML and strict JSON
 
-For JSON-shaped input, the binding can beat Ruby's own `JSON.parse`:
+`Yeptris::YAML.load` keeps the Psych contract for EVERY input —
+including JSON-shaped ones. `{"a": [1,]}` is legal flow YAML (spec
+production [141] allows the trailing comma); `"1e3"` is a Psych
+String. These semantics never flip because input happens to look
+like JSON.
+
+`Yeptris::JSON.load` is the STRICT RFC 8259 surface — exact
+`JSON.parse` semantics by construction (spec-pinned in
+`spec/json_parity_spec.rb`: every value and every error case,
+Bignum integers, exponent-only floats, duplicate keys). Engines,
+fastest first:
+
+1. **Native materializer** (opt-in build; see below): a fused C scan
+   → `VALUE` parser. Order-alternating interleaved profile, 152 KB /
+   ~29k-value corpus, Ruby 3.4:
++
+....
+JSON.parse        min 0.670  med 0.966  mean 0.910 ms
+Yeptris::JSON     min 0.637  med 0.674  mean 0.680 ms
+                  mean 0.75x faster, head-to-head 370/400 (92.5%)
+....
+2. **Record-drain fallback** (always available): the strict-JSON
+   validator gates, then the value records convert without the Psych
+   quirk table — exact parity with engine 1, spec-pinned.
+
+The committed profile (`benchmark/json_profile.rb`) is the fair
+benchmark of record — any performance claim runs through it.
+
+=== Building the native materializer (opt-in)
 
 ....
 cd ext/yeptris_native
@@ -62,22 +90,9 @@ YEPTRIS_LIB_PATH=/path/to/libyeptris.dylib ruby extconf.rb && make
 cp native.bundle ../../lib/yeptris/   # or .so on Linux
 ....
 
-`require "yeptris"` picks it up automatically (a missing build falls
-back to the FFI Marshal ladder silently). Measured on the 152 KB /
-29.4k-value JSON corpus (mean of 300, Ruby 3.4):
-
-....
-JSON.parse           mean 1.597 ms
-Yeptris::YAML.load   mean 1.145 ms   (0.72x — faster than JSON.parse)
-Psych.load           mean 40.60 ms   (35x slower than yeptris)
-....
-
-The extension is a fused RFC 8259 → `VALUE` parser (one pass, no
-intermediate records): libyeptris scan kernels tokenize, the Ruby C
-API allocates, repeated keys/tokens share one frozen `String`, and GC
-is paused for the duration. YAML inputs keep the FFI ladder so
-timestamps, aliases, and Psych's scalar quirks resolve through the
-same path `Psych.load` uses.
+`require "yeptris"` picks it up automatically (`Yeptris::JSON` then
+uses it; missing builds silently use the fallback — the gem installs
+without compiling).
 
 == Shipped beyond the original plan
 

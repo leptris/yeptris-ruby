@@ -3,7 +3,7 @@
 module Yeptris
   # The gem's version lives in the parent namespace's file — the last
   # internal require (yeptris/version) retired with it.
-  VERSION = "0.1.12.0".freeze
+  VERSION = "0.1.13.0".freeze
   # The error hierarchy lives in THIS file (the parent namespace's
   # own file): nested constants do not trigger a parent-constant
   # autoload, and the law forbids internal requires — defining the
@@ -39,6 +39,7 @@ module Yeptris
   autoload :Document, "yeptris/document"
   autoload :Node, "yeptris/node"
   autoload :YAML, "yeptris/yaml"
+  autoload :JSON, "yeptris/json"
   autoload :Materializer, "yeptris/materializer"
   autoload :ValueML, "yeptris/valueml"
   autoload :Psych, "yeptris/psych"
