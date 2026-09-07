@@ -59,6 +59,14 @@ modes = if defined?(Yeptris::Native)
 
 puts "corpus: #{json.bytesize / 1024} KB / ~#{ITEMS * 10} values, N=#{N} (order-alternating interleave), #{RUBY_PLATFORM}"
 puts "engine: #{defined?(Yeptris::Native) ? 'native extension' : 'record-drain fallback'}"
+if defined?(Yeptris::Native)
+  puts "knobs: gc=#{Yeptris::Native.gc_mode} ins=#{Yeptris::Native.ins_mode} cache=#{Yeptris::Native.cache_mode}"
+  # the decomposition (TODO.restructure/37): the pure grammar walk
+  # (same scan kernels, null vtable) bounds the scan cost; the rest
+  # of our time is materialization.
+  printf("scan-only: %.3f ms/iter (grammar walk, no Ruby objects)\n",
+         Yeptris::Native.scan_time(json, 50) * 1e3)
+end
 puts
 puts format("%-10s %-28s %8s %8s %8s %10s %6s",
             "gc_mode", "", "min", "median", "mean", "vs json", "h2h")
