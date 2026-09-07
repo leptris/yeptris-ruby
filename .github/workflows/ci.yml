@@ -75,7 +75,7 @@ jobs:
   # JSON.parse on both platforms (GATE=1.05); off-default combos run
   # ungated as evidence.
   json-profile:
-    name: JSON profile (${{ matrix.os }}, ${{ matrix.gc_mode }}${{ matrix.gated && ', gate' || '' }})
+    name: JSON profile (${{ matrix.os }}, ${{ matrix.gc_mode }}/${{ matrix.ins_mode }}${{ matrix.gated && ', GATE' || '' }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
