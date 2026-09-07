@@ -331,6 +331,8 @@ extern int yep_rb_ins_mode(void);
 extern void yep_rb_set_ins_mode(int mode);
 extern int yep_rb_cache_mode(void);
 extern void yep_rb_set_cache_mode(int mode);
+extern int yep_rb_shape_mode(void);
+extern void yep_rb_set_shape_mode(int mode);
 extern double yep_rb_scan_time(const char* p, size_t len, int n);
 
 static VALUE native_gc_mode(VALUE self) {
@@ -380,6 +382,21 @@ static VALUE native_scan_time(VALUE self, VALUE input, VALUE count) {
     return DBL2NUM(secs / (double)n);
 }
 
+static VALUE native_shape_mode(VALUE self) {
+    (void)self;
+    return yep_rb_shape_mode() == 1 ? ID2SYM(rb_intern("natural")) : ID2SYM(rb_intern("pre"));
+}
+
+static VALUE native_shape_mode_set(VALUE self, VALUE mode) {
+    (void)self;
+    Check_Type(mode, T_SYMBOL);
+    ID id = rb_sym2id(mode);
+    if (id == rb_intern("pre")) yep_rb_set_shape_mode(0);
+    else if (id == rb_intern("natural")) yep_rb_set_shape_mode(1);
+    else rb_raise(rb_eArgError, "shape_mode must be :pre or :natural");
+    return mode;
+}
+
 static VALUE native_gc_mode_set(VALUE self, VALUE mode) {
     (void)self;
     Check_Type(mode, T_SYMBOL);
@@ -404,6 +421,8 @@ RUBY_FUNC_EXPORTED void Init_native(void) {
     rb_define_singleton_method(mNat, "ins_mode=", native_ins_mode_set, 1);
     rb_define_singleton_method(mNat, "cache_mode", native_cache_mode, 0);
     rb_define_singleton_method(mNat, "cache_mode=", native_cache_mode_set, 1);
+    rb_define_singleton_method(mNat, "shape_mode", native_shape_mode, 0);
+    rb_define_singleton_method(mNat, "shape_mode=", native_shape_mode_set, 1);
     rb_define_singleton_method(mNat, "scan_time", native_scan_time, 2);
     rb_define_const(mNat, "AVAILABLE", Qtrue);
     const char* env = getenv("YEPTRIS_NATIVE_GC");
@@ -414,4 +433,6 @@ RUBY_FUNC_EXPORTED void Init_native(void) {
     if (ins != NULL && strcmp(ins, "aset") == 0) yep_rb_set_ins_mode(1);
     const char* cache = getenv("YEPTRIS_NATIVE_CACHE");
     if (cache != NULL && strcmp(cache, "off") == 0) yep_rb_set_cache_mode(1);
+    const char* shape = getenv("YEPTRIS_NATIVE_SHAPE");
+    if (shape != NULL && strcmp(shape, "natural") == 0) yep_rb_set_shape_mode(1);
 }
