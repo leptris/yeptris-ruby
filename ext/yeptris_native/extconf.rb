@@ -35,7 +35,11 @@ end
 abort "libyeptris not found (set YEPTRIS_LIB_PATH)" unless libdir
 
 $LIBPATH << libdir
-$LDFLAGS << " -Wl,-rpath,#{libdir}" if RUBY_PLATFORM =~ /linux|darwin/
+# Platform gems bake a RELATIVE rpath so the bundle finds the
+  # vendored libyeptris next to itself; absolute build-time paths
+  # would dangle on user machines.
+  rpath = ENV["YEPTRIS_RPATH"] || libdir
+  $LDFLAGS << " -Wl,-rpath,#{rpath}" if RUBY_PLATFORM =~ /linux|darwin/
 have_library("yeptris", "yep_json_string") or abort "yep_json_string not exported — rebuild libyeptris"
 have_library("yeptris", "yeptris_visit_json") or abort "yeptris_visit_json missing"
 

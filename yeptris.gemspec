@@ -29,7 +29,8 @@ Gem::Specification.new do |spec|
   # for opt-in builds (see README: "Native materializer"); the gem
   # loads it only when a compiled native.so/.bundle is present and
   # silently falls back to the FFI Marshal ladder otherwise.
-  spec.files = Dir["lib/**/*.rb"] + Dir["ext/**/*.{c,h,rb}"] + %w[README.adoc]
+  spec.files = Dir["lib/**/*.rb"] + Dir["lib/**/*.{so,dylib,dll,bundle}"] +
+               Dir["*.{so,dylib}"] + Dir["ext/**/*.{c,h,rb}"] + %w[README.adoc]
   spec.require_paths = ["lib"]
 
   spec.required_ruby_version = ">= 3.1"
