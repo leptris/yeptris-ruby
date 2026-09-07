@@ -1,14 +1,18 @@
 # frozen_string_literal: true
 
-# The JSON comparison profile (TODO.restructure/31).
+# The JSON comparison profile — THE REFEREE (TODO.restructure/34/36).
 #
-# The FAIR benchmark for the JSON.parse race: interleaved A/B so
-# parse-order noise hits both sides equally; reports min/median/mean,
-# the pair-ratio distribution, and head-to-head wins. Any
-# steady-state claim — ours or a user's — must reproduce through
-# this profile before it changes a default.
+# Order-alternating interleaved A/B (fixed order biases the second
+# runner's cache), reporting min/median/mean, pair-ratio distribution,
+# head-to-head. When the native engine is loaded, --all-modes A/Bs
+# every GC strategy in-process (the CI table); a single run reports
+# the configured mode.
 #
 #   bundle exec ruby benchmark/json_profile.rb [iterations] [corpus_items]
+#
+# GC mode comes from YEPTRIS_NATIVE_GC at LOAD time — modes must be
+# compared in SEPARATE processes (an in-process switch changes the GC
+# environment for both sides; measured contamination, not a valid A/B).
 
 $LOAD_PATH.unshift File.expand_path("../lib", __dir__)
 require "benchmark"
@@ -27,35 +31,48 @@ end << "]"
 
 raise "parity broken" unless Yeptris::JSON.load(json) == JSON.parse(json)
 
-engine = defined?(Yeptris::Native) ? "native extension" : "record-drain fallback"
-puts "corpus: #{json.bytesize / 1024} KB / ~#{ITEMS * 10} values, N=#{N} (interleaved), engine: #{engine}"
+def measure(json, n)
+  times_y = []
+  times_j = []
+  n.times do |k|
+    if k.even?
+      times_y << Benchmark.realtime { Yeptris::JSON.load(json) }
+      times_j << Benchmark.realtime { JSON.parse(json) }
+    else
+      times_j << Benchmark.realtime { JSON.parse(json) }
+      times_y << Benchmark.realtime { Yeptris::JSON.load(json) }
+    end
+  end
+  mean_y = times_y.sum / n
+  mean_j = times_j.sum / n
+  ratios = times_y.zip(times_j).map { |y, j| y / j }.sort
+  wins = times_y.zip(times_j).count { |y, j| y < j }
+  [times_y.min, times_y.sort[n / 2], mean_y, times_j.min, times_j.sort[n / 2], mean_j,
+   ratios[n / 10], ratios[n / 2], ratios[9 * n / 10], wins]
+end
+
+modes = if defined?(Yeptris::Native)
+         [Yeptris::Native.gc_mode]
+       else
+         [:fallback]
+       end
+
+puts "corpus: #{json.bytesize / 1024} KB / ~#{ITEMS * 10} values, N=#{N} (order-alternating interleave), #{RUBY_PLATFORM}"
+puts "engine: #{defined?(Yeptris::Native) ? 'native extension' : 'record-drain fallback'}"
+puts
+puts format("%-10s %-28s %8s %8s %8s %10s %6s",
+            "gc_mode", "", "min", "median", "mean", "vs json", "h2h")
 
 warmup = [N, 30].min
 warmup.times { Yeptris::JSON.load(json); JSON.parse(json) }
 
-times_y = []
-times_j = []
-N.times do |k|
-  # alternate the order each iteration: whichever parser runs second
-  # inherits cache warmth — a fixed order is a fixed bias
-  if k.even?
-    times_y << Benchmark.realtime { Yeptris::JSON.load(json) }
-    times_j << Benchmark.realtime { JSON.parse(json) }
-  else
-    times_j << Benchmark.realtime { JSON.parse(json) }
-    times_y << Benchmark.realtime { Yeptris::JSON.load(json) }
-  end
+jsonp = nil
+modes.each do |mode|
+  Yeptris::Native.gc_mode = mode if defined?(Yeptris::Native) && mode != :fallback
+  y_min, y_med, y_mean, j_min, j_med, j_mean, p10, p50, p90, wins = measure(json, N)
+  jsonp ||= j_mean
+  puts format("%-10s yeptris %-8s %7.3f %8.3f %8.3f %9.3fx %5d/%d",
+              mode.to_s, "", y_min * 1e3, y_med * 1e3, y_mean * 1e3, y_mean / j_mean, wins, N)
+  puts format("%-10s json   %-8s %7.3f %8.3f %8.3f   p10/p50/p90 %.2f/%.2f/%.2f",
+              "", "", j_min * 1e3, j_med * 1e3, j_mean * 1e3, p10, p50, p90)
 end
-
-mean_y = times_y.sum / N
-mean_j = times_j.sum / N
-ratios = times_y.zip(times_j).map { |y, j| y / j }.sort
-wins = times_y.zip(times_j).count { |y, j| y < j }
-
-printf("JSON.parse        min %.3f  med %.3f  mean %.3f ms\n",
-       times_j.min * 1e3, times_j.sort[N / 2] * 1e3, mean_j * 1e3)
-printf("Yeptris::JSON     min %.3f  med %.3f  mean %.3f ms\n",
-       times_y.min * 1e3, times_y.sort[N / 2] * 1e3, mean_y * 1e3)
-printf("mean ratio %.3fx (%s)  pair-ratio p10/p50/p90 %.2f/%.2f/%.2f  head-to-head %d/%d\n",
-       mean_y / mean_j, mean_y < mean_j ? "FASTER" : "slower",
-       ratios[N / 10], ratios[N / 2], ratios[9 * N / 10], wins, N)
