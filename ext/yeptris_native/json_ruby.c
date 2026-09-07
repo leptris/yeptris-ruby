@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "parse/scalars.h"
+#include <yeptris/visit.h>
 #include "scan/json.h"
 
 #define YEP_JR_MAX 1000
@@ -37,6 +38,13 @@ static void jr_ws(jr* j) {
         else break;
     }
 }
+
+/* Token-cache knob (TODO.restructure/37): off = fresh strings
+ * everywhere (JSON.parse's shape: every key pays its own aset
+ * hashing); on = interned keys/tokens (shared frozen VALUEs
+ * memoize their hash). The CI referee A/Bs the net sign per arch. */
+enum { YEP_CACHE_ON = 0, YEP_CACHE_OFF = 1 };
+static int yep_cache_mode = YEP_CACHE_ON;
 
 static uint64_t jr_hash(const char* sp, long sl) {
     /* FNV-1a 64 — cheap, good enough for short keys */
@@ -86,7 +94,7 @@ static VALUE jr_str(jr* j, int as_key) {
         sp = j->p + start + 1;
         sl = (long)(close - start - 1);
     }
-    if (as_key || sl <= 24) return jr_cached(j, sp, sl);
+    if (yep_cache_mode == YEP_CACHE_ON && (as_key || sl <= 24)) return jr_cached(j, sp, sl);
     return rb_enc_str_new(sp, sl, j->enc);
 }
 
@@ -244,6 +252,10 @@ static int yep_gc_mode = YEP_GC_DEFAULT;
 
 int yep_rb_gc_mode(void) { return yep_gc_mode; }
 int yep_rb_ins_mode(void) { return yep_ins_mode; }
+int yep_rb_cache_mode(void) { return yep_cache_mode; }
+void yep_rb_set_cache_mode(int mode) {
+    if (mode == YEP_CACHE_ON || mode == YEP_CACHE_OFF) yep_cache_mode = mode;
+}
 void yep_rb_set_ins_mode(int mode) {
     if (mode == YEP_INS_BULK || mode == YEP_INS_ASET) yep_ins_mode = mode;
 }
@@ -251,6 +263,21 @@ void yep_rb_set_gc_mode(int mode) {
     if (mode >= YEP_GC_DISABLE && mode <= YEP_GC_START) {
         yep_gc_mode = mode;
     }
+}
+
+/* Pure grammar walk, no materialization (TODO.restructure/37): the
+ * same scan kernels through the null vtable. Decomposes scan vs
+ * materialize cost. Returns seconds for n iterations. */
+#include <time.h>
+double yep_rb_scan_time(const char* p, size_t len, int n) {
+    static const YeptrisVisitVTable none = {0};
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (int i = 0; i < n; i++) {
+        (void)yeptris_visit_json(p, len, &none, NULL);
+    }
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    return (double)(t1.tv_sec - t0.tv_sec) + (double)(t1.tv_nsec - t0.tv_nsec) / 1e9;
 }
 
 VALUE yep_rb_parse_json(const char* p, size_t len) {

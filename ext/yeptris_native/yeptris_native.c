@@ -329,6 +329,9 @@ extern int yep_rb_gc_mode(void);
 extern void yep_rb_set_gc_mode(int mode);
 extern int yep_rb_ins_mode(void);
 extern void yep_rb_set_ins_mode(int mode);
+extern int yep_rb_cache_mode(void);
+extern void yep_rb_set_cache_mode(int mode);
+extern double yep_rb_scan_time(const char* p, size_t len, int n);
 
 static VALUE native_gc_mode(VALUE self) {
     (void)self;
@@ -354,6 +357,29 @@ static VALUE native_ins_mode_set(VALUE self, VALUE mode) {
     return mode;
 }
 
+static VALUE native_cache_mode(VALUE self) {
+    (void)self;
+    return yep_rb_cache_mode() == 1 ? ID2SYM(rb_intern("off")) : ID2SYM(rb_intern("on"));
+}
+
+static VALUE native_cache_mode_set(VALUE self, VALUE mode) {
+    (void)self;
+    Check_Type(mode, T_SYMBOL);
+    ID id = rb_sym2id(mode);
+    if (id == rb_intern("on")) yep_rb_set_cache_mode(0);
+    else if (id == rb_intern("off")) yep_rb_set_cache_mode(1);
+    else rb_raise(rb_eArgError, "cache_mode must be :on or :off");
+    return mode;
+}
+
+static VALUE native_scan_time(VALUE self, VALUE input, VALUE count) {
+    (void)self;
+    StringValue(input);
+    int n = NUM2INT(count);
+    double secs = yep_rb_scan_time(RSTRING_PTR(input), (size_t)RSTRING_LEN(input), n);
+    return DBL2NUM(secs / (double)n);
+}
+
 static VALUE native_gc_mode_set(VALUE self, VALUE mode) {
     (void)self;
     Check_Type(mode, T_SYMBOL);
@@ -376,6 +402,9 @@ RUBY_FUNC_EXPORTED void Init_native(void) {
     rb_define_singleton_method(mNat, "gc_mode=", native_gc_mode_set, 1);
     rb_define_singleton_method(mNat, "ins_mode", native_ins_mode, 0);
     rb_define_singleton_method(mNat, "ins_mode=", native_ins_mode_set, 1);
+    rb_define_singleton_method(mNat, "cache_mode", native_cache_mode, 0);
+    rb_define_singleton_method(mNat, "cache_mode=", native_cache_mode_set, 1);
+    rb_define_singleton_method(mNat, "scan_time", native_scan_time, 2);
     rb_define_const(mNat, "AVAILABLE", Qtrue);
     const char* env = getenv("YEPTRIS_NATIVE_GC");
     if (env != NULL && strcmp(env, "none") == 0) yep_rb_set_gc_mode(1);
@@ -383,4 +412,6 @@ RUBY_FUNC_EXPORTED void Init_native(void) {
     else if (env != NULL && strcmp(env, "disable") == 0) yep_rb_set_gc_mode(0);
     const char* ins = getenv("YEPTRIS_NATIVE_INSERT");
     if (ins != NULL && strcmp(ins, "aset") == 0) yep_rb_set_ins_mode(1);
+    const char* cache = getenv("YEPTRIS_NATIVE_CACHE");
+    if (cache != NULL && strcmp(cache, "off") == 0) yep_rb_set_cache_mode(1);
 }

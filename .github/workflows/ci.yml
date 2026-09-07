@@ -112,6 +112,20 @@ jobs:
             gc_mode: disable
             ins_mode: aset
             gated: false
+          # cache-off rows (TODO.restructure/37): does the token
+          # cache net-win per platform?
+          - os: ubuntu-latest
+            ruby: "3.4"
+            gc_mode: disable
+            ins_mode: bulk
+            cache_mode: "off"
+            gated: false
+          - os: macos-latest
+            ruby: "3.4"
+            gc_mode: none
+            ins_mode: bulk
+            cache_mode: "off"
+            gated: false
     steps:
       - name: Checkout binding
         uses: actions/checkout@v4
@@ -162,5 +176,6 @@ jobs:
           fi
           export YEPTRIS_NATIVE_GC="${{ matrix.gc_mode }}"
           export YEPTRIS_NATIVE_INSERT="${{ matrix.ins_mode }}"
+          export YEPTRIS_NATIVE_CACHE="${{ matrix.cache_mode || 'on' }}"
           export GATE="${{ matrix.gated && '1.05' || '' }}"
           bundle exec ruby benchmark/json_profile.rb 200
