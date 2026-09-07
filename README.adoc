@@ -71,10 +71,20 @@ fastest first:
    ~29k-value corpus, Ruby 3.4:
 +
 ....
-JSON.parse        min 0.670  med 0.966  mean 0.910 ms
-Yeptris::JSON     min 0.637  med 0.674  mean 0.680 ms
-                  mean 0.75x faster, head-to-head 370/400 (92.5%)
+CI referee (gated at 1.05 on both platforms, order-alternating
+interleave, N=200):
+  ubuntu (x86_64, gc=disable)   mean 0.961x  vs JSON.parse
+  macos  (arm64,  gc=none)      mean 0.718x  (head-to-head 173/200)
 ....
+
+The parse-window GC strategy is per-arch and runtime-switchable:
+`Yeptris::Native.gc_mode` / `YEPTRIS_NATIVE_GC` = `:none`
+(steady-state: +0 heap pages, the stdlib's own GC cadence — the
+default on arm64) or `:disable` (no GC during the parse — the
+default on x86_64, faster where pages are free). On a LOADED x86_64
+box prefer `:none`: `:disable` grows ~478 heap pages per 50 parses,
+and page growth under contention is exactly the loaded-box
+regression. `:start` (in-window collection) measured 8x — dead.
 2. **Record-drain fallback** (always available): the strict-JSON
    validator gates, then the value records convert without the Psych
    quirk table — exact parity with engine 1, spec-pinned.
