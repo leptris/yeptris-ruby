@@ -328,7 +328,17 @@ class Yeptris::Node
     when :null then nil
     when :bool then to_bool
     when :int then to_i
-    when :float then to_f
+    when :float
+      # Psych's dot-required float applies ONLY under compat_11; the
+      # core schema's regexp has an optional dot (spec 10.3.2), so
+      # core_12 exponent-only floats materialize as Floats
+      text = value.to_s
+      if @document.parse_schema == :compat_11 &&
+         !text.include?(".") && !text.include?(":") && !text.start_with?(".")
+        text
+      else
+        to_f
+      end
     when :timestamp then ::Yeptris::Materializer.parse_timestamp(value)
     else value
     end

@@ -178,5 +178,5 @@ jobs:
           export YEPTRIS_NATIVE_INSERT="${{ matrix.ins_mode }}"
           export YEPTRIS_NATIVE_CACHE="${{ matrix.cache_mode || 'on' }}"
           export YEPTRIS_NATIVE_SHAPE="${{ matrix.shape_mode || 'pre' }}"
-          export GATE="${{ matrix.gated && '1.05' || '' }}"
+          export GATE="${{ matrix.gated && '1.00' || '' }}"
           bundle exec ruby benchmark/json_profile.rb 200

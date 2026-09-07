@@ -49,7 +49,7 @@ module Yeptris
         flat = vals.read_bytes(count * VALUE_SIZE).unpack(UNPACK * count)
         arena_bytes = arena.read_bytes(alen_p.read_uint64)
         arena_bytes.force_encoding(Encoding::UTF_8)
-        walk(flat, arena_bytes)
+        walk(flat, arena_bytes, schema == :compat_11)
       ensure
         FFI.yeptris_value_free(vals, arena)
       end
@@ -81,7 +81,8 @@ module Yeptris
         pays = cols[:payloads].read_bytes(n * 8).unpack("q<*")
         arena_bytes = cols[:arena].read_bytes(cols[:arena_len])
         arena_bytes.force_encoding(Encoding::UTF_8)
-        walk_columns(kinds, tags, ikeys, bools, offs, lens, pays, arena_bytes)
+        walk_columns(kinds, tags, ikeys, bools, offs, lens, pays, arena_bytes,
+                      schema == :compat_11)
       ensure
         FFI.yeptris_value_free_columns(cols)
       end
@@ -130,7 +131,7 @@ module Yeptris
     LEN = 5
     P64 = 6
 
-    def walk(flat, arena)
+    def walk(flat, arena, compat = true)
       docs = []
       stack = []
       anchors = {}
@@ -171,7 +172,7 @@ module Yeptris
           # Psych's float grammar requires the dot (or an inf/nan
           # word, or sexagesimal ':') — exponent-only forms are
           # Strings even when the compat tag says FLOAT
-          v = if text.include?(".") || text.include?(":") || text.start_with?(".")
+          v = if !compat || text.include?(".") || text.include?(":") || text.start_with?(".")
                 [flat[i + P64]].pack("q<").unpack1("E")
               else
                 text
@@ -248,7 +249,7 @@ module Yeptris
 
     # The columnar twin of walk above (lockstep: same semantics, same
     # order; fields come from tight per-kind arrays, stride 1).
-    def walk_columns(kinds, tags, ikeys, bools, offs, lens, pays, arena)
+    def walk_columns(kinds, tags, ikeys, bools, offs, lens, pays, arena, compat = true)
       docs = []
       stack = []
       anchors = {}
@@ -331,7 +332,7 @@ module Yeptris
           end
         when V_FLOAT
           text = arena.byteslice(offs[i], lens[i])
-          v = if text.include?(".") || text.include?(":") || text.start_with?(".")
+          v = if !compat || text.include?(".") || text.include?(":") || text.start_with?(".")
                 [pays[i]].pack("q<").unpack1("E")
               else
                 text
