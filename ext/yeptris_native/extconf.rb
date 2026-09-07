@@ -2,6 +2,9 @@
 
 require "mkmf"
 
+# libyeptris location: YEPTRIS_LIB_PATH (file or dir), then sibling
+# checkouts. CI sets YEPTRIS_LIB_PATH (the built shared library) and
+# YEPTRIS_SRC (the C checkout) explicitly.
 lib_path = ENV["YEPTRIS_LIB_PATH"]
 candidates = []
 if lib_path
@@ -13,11 +16,12 @@ candidates << File.expand_path("../../../../yeptris/build/src", __dir__)
 candidates << File.expand_path("../../../yeptris/build-validate/src", __dir__)
 candidates << File.expand_path("../../../yeptris/build/src", __dir__)
 
-src_root = [
-  File.expand_path("../../../../yeptris/src", __dir__),
-  File.expand_path("../../../yeptris/src", __dir__),
-].find { |d| d && File.directory?(File.join(d, "include")) }
-abort "yeptris sources not found" unless src_root
+# Source root: YEPTRIS_SRC (CI / explicit), then sibling checkouts.
+src_roots = [ENV["YEPTRIS_SRC"]].compact
+src_roots << File.expand_path("../../../../yeptris/src", __dir__)
+src_roots << File.expand_path("../../../yeptris/src", __dir__)
+src_root = src_roots.find { |d| d && File.directory?(File.join(d, "include")) }
+abort "yeptris sources not found (set YEPTRIS_SRC)" unless src_root
 
 $INCFLAGS << " -I#{src_root}/include -I#{src_root}/yeptris"
 %w[build-validate/generated build/generated].each do |g|

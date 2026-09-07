@@ -1,14 +1,14 @@
 /* json_ruby.c — fused RFC 8259 → Ruby VALUE (TODO.restructure/22). */
 #include <ruby.h>
 #include <ruby/encoding.h>
+#include <ruby/intern.h>
 #include <stdlib.h>
 #include <string.h>
-#include "parse/numbers.h"
 #include "parse/scalars.h"
 #include "scan/json.h"
 
 #define YEP_JR_MAX 1000
-#define YEP_KC 256
+#define YEP_KC 1024
 
 typedef struct {
     uint64_t h;
@@ -86,40 +86,37 @@ static VALUE jr_str(jr* j, int as_key) {
         sp = j->p + start + 1;
         sl = (long)(close - start - 1);
     }
-    if (as_key || sl <= 2) return jr_cached(j, sp, sl);
+    if (as_key || sl <= 24) return jr_cached(j, sp, sl);
     return rb_enc_str_new(sp, sl, j->enc);
 }
 
 static VALUE jr_num(jr* j) {
     size_t start = j->i;
-    if (!yep_json_number(j->p, j->len, &j->i)) { j->err = -2; return Qnil; }
-    const char* s = j->p + start;
-    uint32_t n = (uint32_t)(j->i - start);
-    int is_float = 0, neg = 0;
-    uint32_t k = 0;
-    if (s[0] == '-') { neg = 1; k = 1; }
-    for (; k < n; k++) {
-        char c = s[k];
-        if (c == '.' || c == 'e' || c == 'E') { is_float = 1; break; }
+    int shape = 0;
+    int64_t iv = 0;
+    double dv = 0.0;
+    /* the fused kernel (scan/json.h): ONE grammar walk, values out */
+    if (!yep_json_number_scan(j->p, j->len, &j->i, &shape, &iv, &dv)) {
+        j->err = -2;
+        return Qnil;
     }
-    if (!is_float && n - (uint32_t)neg <= 18) {
-        int64_t v = 0;
-        for (k = (uint32_t)neg; k < n; k++) v = v * 10 + (s[k] - '0');
-        if (neg) v = -v;
-        return LL2NUM(v);
+    if (shape == 0) {
+        return LL2NUM(iv);
     }
-    if (is_float) {
-        double d = 0.0;
-        if (yep_num_f64(s, n, &d) != 0) { j->err = -2; return Qnil; }
-        return DBL2NUM(d);
+    if (shape == 1) {
+        return DBL2NUM(dv);
     }
-    int64_t v = 0;
-    if (yep_num_i64(s, n, &v) != 0) {
-        double d = 0.0;
-        if (yep_num_f64(s, n, &d) != 0) { j->err = -2; return Qnil; }
-        return DBL2NUM(d);
+    /* integer text beyond int64: exact Bignum from the validated
+     * span (JSON.parse's behavior). Absurd lengths degrade to the
+     * approximate double. */
+    size_t n = j->i - start;
+    if (n < 512) {
+        char buf[512];
+        memcpy(buf, j->p + start, n);
+        buf[n] = '\0';
+        return rb_cstr_to_inum(buf, 10, TRUE);
     }
-    return LL2NUM(v);
+    return DBL2NUM(dv);
 }
 
 static VALUE jr_object(jr* j) {
@@ -127,23 +124,44 @@ static VALUE jr_object(jr* j) {
     VALUE h = rb_hash_new_capa(8);
     jr_ws(j);
     if (j->i < j->len && j->p[j->i] == '}') { j->i++; j->depth--; return h; }
+    /* pairs collect into a flat buffer and land in ONE bulk insert:
+     * rb_hash_bulk_insert skips the per-pair method dispatch the
+     * aset loop pays (TODO.restructure/26's margin work) */
+    VALUE pairs[64];
+    VALUE* pv = pairs;
+    size_t pcap = 64, pn = 0, heap_cap = 0;
     for (;;) {
         jr_ws(j);
-        if (j->i >= j->len || j->p[j->i] != '"') { j->err = -2; return Qnil; }
+        if (j->i >= j->len || j->p[j->i] != '"') { j->err = -2; goto out; }
         VALUE key = jr_str(j, 1);
-        if (j->err) return Qnil;
+        if (j->err) goto out;
         jr_ws(j);
-        if (j->i >= j->len || j->p[j->i] != ':') { j->err = -2; return Qnil; }
+        if (j->i >= j->len || j->p[j->i] != ':') { j->err = -2; goto out; }
         j->i++;
         VALUE val = jr_value(j);
-        if (j->err) return Qnil;
-        rb_hash_aset(h, key, val);
+        if (j->err) goto out;
+        if (pn + 2 > pcap) {
+            size_t ncap = pcap * 2;
+            VALUE* nv = malloc(ncap * sizeof(VALUE));
+            if (!nv) { j->err = -1; goto out; }
+            memcpy(nv, pv, pn * sizeof(VALUE));
+            if (pv != pairs) { free(pv); heap_cap = 1; }
+            pv = nv; pcap = ncap;
+        }
+        pv[pn++] = key;
+        pv[pn++] = val;
         jr_ws(j);
-        if (j->i >= j->len) { j->err = -2; return Qnil; }
+        if (j->i >= j->len) { j->err = -2; goto out; }
         if (j->p[j->i] == ',') { j->i++; continue; }
-        if (j->p[j->i] == '}') { j->i++; j->depth--; return h; }
-        j->err = -2; return Qnil;
+        if (j->p[j->i] == '}') { j->i++; break; }
+        j->err = -2; goto out;
     }
+    rb_hash_bulk_insert((long)pn, (const VALUE*)pv, h);
+out:
+    if (pv != pairs) { free(pv); (void)heap_cap; }
+    if (j->err) return Qnil;
+    j->depth--;
+    return h;
 }
 
 static VALUE jr_array(jr* j) {

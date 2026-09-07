@@ -45,6 +45,19 @@ jobs:
             -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
           cmake --build libyeptris-src/build
 
+      - name: Build the native materializer
+        run: |
+          if [ "$(uname -s)" = "Darwin" ]; then
+            export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.dylib"
+          else
+            export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
+          fi
+          export YEPTRIS_SRC="$GITHUB_WORKSPACE/libyeptris-src/src"
+          cd ext/yeptris_native
+          ruby extconf.rb
+          make
+          cp native.bundle ../../lib/yeptris/ 2>/dev/null || cp native.so ../../lib/yeptris/
+
       - name: Run binding specs
         run: |
           if [ "$(uname -s)" = "Darwin" ]; then
