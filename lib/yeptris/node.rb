@@ -243,14 +243,48 @@ class Yeptris::Node
   end
 
   def to_ruby(memo = nil)
-    # readonly documents memoize per node: repeated materialization
-    # of a shared subtree returns the SAME object at zero walk cost
+    # readonly documents memoize per node: a second materialization
+    # returns the SAME object (the readonly cache is the ground truth
+    # for alias identity across calls).
     if @document.readonly?
       rm = @document.readonly_memo
       cached = rm[node_id]
       return cached if cached
-
-      return rm[node_id] = to_ruby_walk({})
+    end
+    # Marshal fast path (TODO.restructure/21): one C call turns the
+    # whole subtree into Ruby objects, preserving alias identity via
+    # the object's own object-link table. Only at the TOP-LEVEL entry
+    # (memo nil): inside a recursive walk a partial marshal would
+    # materialize outside the shared memo and break alias identity.
+    # Falls back to the per-node FFI walk on constructs the format
+    # cannot express (merge keys, timestamps) and on older builds.
+    if Yeptris::FFI::MARSHAL && memo.nil?
+      result =
+        begin
+          out_p = ::FFI::MemoryPointer.new(:pointer)
+          olen_p = ::FFI::MemoryPointer.new(:size_t)
+          st = Yeptris::FFI.yeptris_marshal_node(@c_ptr, out_p, olen_p)
+          if st == Yeptris::FFI::ERROR_UNSUPPORTED
+            nil
+          elsif st != Yeptris::FFI::OK
+            raise Yeptris::ParseError, Yeptris::FFI.last_error_message
+          else
+            buf = out_p.read_pointer
+            len = olen_p.read_uint64
+            bytes = buf.read_bytes(len)
+            bytes.force_encoding(Encoding::ASCII_8BIT)
+            ::Marshal.load(bytes)
+          end
+        ensure
+          Yeptris::FFI.yeptris_marshal_free(out_p.read_pointer) if out_p
+        end
+      unless result.nil?
+        @document.readonly_memo[node_id] = result if @document.readonly?
+        return result
+      end
+    end
+    if @document.readonly?
+      return @document.readonly_memo[node_id] = to_ruby_walk({})
     end
     to_ruby_walk(memo || {})
   end
