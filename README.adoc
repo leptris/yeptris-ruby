@@ -52,6 +52,33 @@ Handles are document-scoped: `Document#free` releases everything
 (one C call), a GC finalizer backs it up, and any use after free
 raises `Yeptris::FreedError` — never a segfault.
 
+== Native materializer (opt-in): faster than JSON.parse
+
+For JSON-shaped input, the binding can beat Ruby's own `JSON.parse`:
+
+....
+cd ext/yeptris_native
+YEPTRIS_LIB_PATH=/path/to/libyeptris.dylib ruby extconf.rb && make
+cp native.bundle ../../lib/yeptris/   # or .so on Linux
+....
+
+`require "yeptris"` picks it up automatically (a missing build falls
+back to the FFI Marshal ladder silently). Measured on the 152 KB /
+29.4k-value JSON corpus (mean of 300, Ruby 3.4):
+
+....
+JSON.parse           mean 1.597 ms
+Yeptris::YAML.load   mean 1.145 ms   (0.72x — faster than JSON.parse)
+Psych.load           mean 40.60 ms   (35x slower than yeptris)
+....
+
+The extension is a fused RFC 8259 → `VALUE` parser (one pass, no
+intermediate records): libyeptris scan kernels tokenize, the Ruby C
+API allocates, repeated keys/tokens share one frozen `String`, and GC
+is paused for the duration. YAML inputs keep the FFI ladder so
+timestamps, aliases, and Psych's scalar quirks resolve through the
+same path `Psych.load` uses.
+
 == Shipped beyond the original plan
 
 * The columnar value drain (bulk, pre-converted typed columns — the
@@ -65,8 +92,10 @@ raises `Yeptris::FreedError` — never a segfault.
   object links; merge keys and timestamps return UNSUPPORTED for the
   record-walk fallback.
 * `Yeptris::Psych` — the drop-in namespace with the ported Psych
-  suite (143 specs), `.tml` corpora conformance, and the object
-  visitor (`encode_with`/`init_with`).
+  suite (143 specs), `.tml` corpora conformance, and the Encodable
+  object protocol (`include Yeptris::Psych::Encodable` +
+  `encode_with`/`init_with` — no `respond_to?`, no ivar reflection;
+  the library never reaches into an object's internals).
 * Lockstep versioning with the C library
   (`{c-semver}.{gem-patch}`); releases published from the C repo's
   workflow through the RubyGems trusted publisher.

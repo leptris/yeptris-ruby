@@ -1,5 +1,9 @@
 # frozen_string_literal: true
 
+require "date"
+require "time"
+require "set"
+
 # The Psych drop-in namespace (TODO.impl/15 phase C).
 #
 # `require "yeptris/psych"` rebinds the top-level Psych constant to
@@ -20,6 +24,11 @@ module Yeptris
     autoload :Parser, "yeptris/psych/parser"
     autoload :CoderShim, "yeptris/psych/coder_shim"
     autoload :Visitors, "yeptris/psych/visitors"
+    # The typed opt-in marker for arbitrary-object dump/load
+    # (TODO.restructure/23). Eager by intent: classes include it at
+    # declaration time, so the autoload must resolve before any
+    # object instance exists.
+    autoload :Encodable, "yeptris/psych/encodable"
     class Error < StandardError; end
     class SyntaxError < Error
       attr_reader :line, :column
@@ -106,7 +115,7 @@ module Yeptris
         # data anyway
         out =
           case obj
-          when nil, true, false, String, Integer, Float, Symbol, Date, Time
+          when nil, true, false, ::String, ::Integer, ::Float, ::Symbol, ::Date, ::Time
             Yeptris::YAML.dump(obj)
           else
             Visitors::YAMLTree.new.push(obj).finish

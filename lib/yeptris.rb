@@ -3,7 +3,7 @@
 module Yeptris
   # The gem's version lives in the parent namespace's file — the last
   # internal require (yeptris/version) retired with it.
-  VERSION = "0.1.11.0".freeze
+  VERSION = "0.1.12.0".freeze
   # The error hierarchy lives in THIS file (the parent namespace's
   # own file): nested constants do not trigger a parent-constant
   # autoload, and the law forbids internal requires — defining the
@@ -57,4 +57,13 @@ rescue LoadError => e
     platform gem that vendors it.
     (Underlying error: #{e.message})
   MSG
+end
+
+# Optional C-API materializer (TODO.restructure/22): fused visit →
+# Ruby objects via the Ruby C API. Feature-detected — LoadError leaves
+# the FFI ladder (Marshal → columns → records) as the sole path.
+begin
+  require "yeptris/native"
+rescue LoadError
+  # FFI ladder only
 end

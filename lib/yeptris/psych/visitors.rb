@@ -9,7 +9,7 @@ module Yeptris
     module Visitors
       # The dump-side visitor (Psych's YAMLTree core): an arbitrary
       # Ruby object graph becomes DOM nodes — anchors for shared
-      # objects, aliases for repeats, encode_with support, and the
+      # objects, aliases for repeats, the Encodable protocol, and the
       # !ruby/... tags Psych's own emitter produces.
       class YAMLTree
         def initialize
@@ -33,19 +33,24 @@ module Yeptris
 
         def visit(obj)
           case obj
-          when nil, true, false, Integer, Float, String then scalar(obj)
-          when Symbol then scalar(":#{obj}")
-          when Date, Time then scalar(obj) # timestamp text, never ivars
-          when Hash then visit_hash(obj)
-          when Array then visit_array(obj)
-          when Struct then visit_struct(obj)
-          when Set then visit_set(obj)
+          when nil, true, false, ::Integer, ::Float, ::String then scalar(obj)
+          when ::Symbol then scalar(":#{obj}")
+          when ::Date, ::Time then scalar(obj) # timestamp text, never ivars
+          when ::Hash then visit_hash(obj)
+          when ::Array then visit_array(obj)
+          when ::Struct then visit_struct(obj)
+          when ::Set then visit_set(obj)
+          when Encodable then visit_encode_with(obj)
           else
-            if obj.respond_to?(:encode_with)
-              visit_encode_with(obj)
-            else
-              visit_object(obj)
+            if obj.instance_of?(::Object)
+              # A BARE Object has no declared state to lose — the
+              # empty !ruby/object form is correct by construction
+              # (an Object with ivars set from outside its class is
+              # outside the encapsulation contract; use a real class
+              # with Encodable for stateful objects).
+              return visit_bare_object(obj)
             end
+            refuse_dump(obj)
           end
         end
 
@@ -79,33 +84,43 @@ module Yeptris
             obj.each_pair { |_k, v| @refs[v.object_id] += 1; count_refs(v, seen) }
           when Set
             obj.each { |v| @refs[v.object_id] += 1; count_refs(v, seen) }
-          when String, Integer, Float, Symbol, Date, Time, true, false, nil, Numeric
+          when ::String, ::Integer, ::Float, ::Symbol, ::Date, ::Time, true, false, nil, ::Numeric
             # immutables: identity anchors are meaningless
           else
-            if obj.respond_to?(:encode_with)
-              # coder contents are opaque here; the object itself may
-              # repeat — count it from the caller side only
-            else
-              obj.instance_variables.each do |iv|
-                v = obj.instance_variable_get(iv)
-                @refs[v.object_id] += 1
-                count_refs(v, seen)
+            unless obj.instance_of?(::Object)
+              refuse_dump(obj) unless obj.is_a?(Encodable)
+              # Encodable: descend through the PUBLIC protocol so
+              # shared objects inside coder contents still get
+              # anchors — encode_with must be pure (it runs once more
+              # at dump).
+              coder = ::Yeptris::Psych::CoderShim.new(nil)
+              obj.encode_with(coder)
+              case coder.type
+              when :seq
+                coder.seq.each { |v| @refs[v.object_id] += 1; count_refs(v, seen) }
+              when :map
+                coder.each { |_k, v| @refs[v.object_id] += 1; count_refs(v, seen) }
               end
             end
           end
+        end
+
+        def refuse_dump(obj)
+          raise ::Yeptris::DumpError,
+                "cannot dump #{obj.class}: include Yeptris::Psych::Encodable and implement encode_with(coder)"
         end
 
         def scalar(obj, tag: nil)
           # strings route through the builder's plain-safety helper
           # (one quoting rule, DRY); other scalars are their own text
           text =
-            if obj.is_a?(Date) || obj.is_a?(Time)
+            if obj.is_a?(::Date) || obj.is_a?(::Time)
               obj.iso8601 # canonical timestamp form, not to_s
             else
               obj.nil? ? "null" : obj.to_s
             end
           n =
-            if obj.is_a?(String)
+            if obj.is_a?(::String)
               ::Yeptris::YAML::Builder.build_string(@tree, obj)
             else
               @tree.new_scalar(text, :plain)
@@ -165,37 +180,40 @@ module Yeptris
           return alias_of(obj, name) if state == :alias
 
           coder = ::Yeptris::Psych::CoderShim.new(obj.class.name)
-          obj.encode_with(coder)
-          node =
-            case coder.type
-            when :scalar then scalar(coder.scalar, tag: coder.tag)
-            when :seq
-              s = @tree.new_sequence
-              s.set_tag(coder.tag) if coder.tag
-              coder.seq.each { |e| s.seq_add(visit(e)) }
-              s
-            else
-              m = @tree.new_mapping
-              m.set_tag(coder.tag) if coder.tag
-              coder.each { |k, v| m.map_add(key_text(k), visit(v)) }
-              m
-            end
-          remember(obj, node)
-          node.set_anchor(name) if name
-          node
+          obj.encode_with(coder) # the typed public surface
+          # Wrap coder contents in a __init__ sub-mapping so the load
+          # side can dispatch back into obj.init_with(coder) without
+          # library-side ivar reflection (the encapsulation law).
+          init = @tree.new_mapping
+          case coder.type
+          when :scalar
+            init.map_add("__scalar__", scalar(coder.scalar))
+            init.map_add("__tag__", scalar(coder.tag)) if coder.tag
+          when :seq
+            inner = @tree.new_sequence
+            inner.set_tag(coder.tag) if coder.tag
+            coder.seq.each { |e| inner.seq_add(visit(e)) }
+            init.seq_add(inner)
+          else
+            coder.each { |k, v| init.map_add(key_text(k), visit(v)) }
+            init.set_tag(coder.tag) if coder.tag
+          end
+          m = @tree.new_mapping
+          m.set_anchor(name) if name
+          m.set_tag("!ruby/object:#{obj.class.name}")
+          m.map_add("__init__", init)
+          remember(obj, m)
+          m
         end
 
-        def visit_object(obj)
+        def visit_bare_object(obj)
           state, name = anchor_for(obj)
           return alias_of(obj, name) if state == :alias
 
           m = @tree.new_mapping
           remember(obj, m)
           m.set_anchor(name) if name
-          m.set_tag("!ruby/object:#{obj.class.name}")
-          obj.instance_variables.each do |ivar|
-            m.map_add(ivar.to_s, visit(obj.instance_variable_get(ivar)))
-          end
+          m.set_tag("!ruby/object")
           m
         end
 
@@ -322,30 +340,31 @@ module Yeptris
         end
 
         def revive_object(klass, node)
-          obj = klass ? klass.allocate : ::Object.new
+          # bare !ruby/object (no class): Psych.dump(Object.new)'s form.
+          # An Object has no declared state — allocation is the whole
+          # revival (no reflection, no protocol needed).
+          return ::Object.allocate if klass.nil?
+
+          raise ::Yeptris::DumpError, "#{klass} is not Yeptris::Psych::Encodable: implement init_with(coder)" unless klass <= ::Yeptris::Psych::Encodable
+
+          obj = klass.allocate
           anchors[node.anchor] = obj if node.anchor
+          # The class opts in via init_with(coder); the encoder wrote
+          # `coder["__init__"] = the mapping` so we can pass it back
+          # without library-side ivar reflection.
           node.children.each_slice(2) do |k, v|
             key = k.to_ruby.to_s
-            if key == "__init__"
-              init_with(obj, v)
-            else
-              ivar = key.start_with?("@") ? key.to_sym : "@#{key}".to_sym
-              obj.instance_variable_set(ivar, visit(v))
+            next unless key == "__init__"
+
+            coder = ::Yeptris::Psych::CoderShim.new
+            if v.is_a?(::Yeptris::Psych::Nodes::Mapping)
+              v.children.each_slice(2) do |ck, cv|
+                coder[ck.to_ruby.to_s] = visit(cv)
+              end
             end
+            obj.init_with(coder)
           end
           obj
-        end
-
-        def init_with(obj, value_node)
-          return unless obj.respond_to?(:init_with)
-
-          coder = ::Yeptris::Psych::CoderShim.new
-          if value_node.is_a?(::Yeptris::Psych::Nodes::Mapping)
-            value_node.children.each_slice(2) do |k, v|
-              coder[k.to_ruby.to_s] = visit(v)
-            end
-          end
-          obj.init_with(coder)
         end
 
         def resolve_class(name)
