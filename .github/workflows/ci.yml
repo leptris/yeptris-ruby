@@ -80,28 +80,35 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        ruby: ["3.4"]
+        # include-ONLY: top-level keys would make the entries MERGE
+        # into base combos instead of adding rows (measured: 2 of 5
+        # jobs ran). ruby rides every row.
         include:
-          # defaults: x86_64-linux -> disable; darwin/arm64 -> none
+          # per-arch defaults (TODO.restructure/35): x86_64-linux ->
+          # disable; darwin/arm64 -> none. GATED at 1.05.
           - os: ubuntu-latest
+            ruby: "3.4"
             gc_mode: disable
             ins_mode: bulk
             gated: true
           - os: macos-latest
+            ruby: "3.4"
             gc_mode: none
             ins_mode: bulk
             gated: true
-          # off-default evidence rows
+          # off-default evidence rows (ungated)
           - os: ubuntu-latest
+            ruby: "3.4"
             gc_mode: none
             ins_mode: bulk
             gated: false
           - os: macos-latest
+            ruby: "3.4"
             gc_mode: disable
             ins_mode: bulk
             gated: false
           - os: ubuntu-latest
+            ruby: "3.4"
             gc_mode: disable
             ins_mode: aset
             gated: false
