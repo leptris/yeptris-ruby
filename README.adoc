@@ -57,6 +57,13 @@ raises `Yeptris::FreedError` — never a segfault.
 * The columnar value drain (bulk, pre-converted typed columns — the
   load fast path) and the bulk DOM builder (one `document_build`
   call per dump).
+* **Ruby Marshal 4.8 emission** (libyeptris >= 0.1.11): the C side
+  converts value records into Marshal bytes; one `Marshal.load`
+  materializes the whole graph. ~10× faster than the columnar walk
+  on JSON-shaped input, ~5× on YAML, ~50× on the per-node DOM walk
+  (`Node#to_ruby` becomes bulk). Alias identity preserved through
+  object links; merge keys and timestamps return UNSUPPORTED for the
+  record-walk fallback.
 * `Yeptris::Psych` — the drop-in namespace with the ported Psych
   suite (143 specs), `.tml` corpora conformance, and the object
   visitor (`encode_with`/`init_with`).

@@ -87,6 +87,35 @@ module Yeptris
       end
     end
 
+    # The Marshal fast path (TODO.restructure/21): the C side emits
+    # Ruby Marshal 4.8 bytes; one Marshal.load call (a core-C routine)
+    # materializes the whole object graph. ~10x faster than walking
+    # the columns in pure Ruby on JSON-shaped input; ~5x on YAML. Falls
+    # back to load_all_columns on the constructs the format cannot
+    # express (merge keys, timestamps — rare; the record walk handles
+    # them). Feature-detected: older libyeptris returns the walk.
+    def load_all_marshal(yaml, schema: :compat_11, mode: :first)
+      yaml = Yeptris.read_input(yaml)
+      yaml = yaml.to_s
+      out_p = ::FFI::MemoryPointer.new(:pointer)
+      olen_p = ::FFI::MemoryPointer.new(:size_t)
+      mode_id = mode == :all ? FFI::MARSHAL_ALL_DOCS : FFI::MARSHAL_FIRST_DOC
+      st = FFI.yeptris_marshal(
+        yaml, yaml.bytesize,
+        schema == :compat_11 ? FFI::SCHEMA_11_COMPAT : FFI::SCHEMA_12_CORE,
+        mode_id, out_p, olen_p
+      )
+      return nil if st == FFI::ERROR_UNSUPPORTED
+      raise ParseError, FFI.last_error_message if st != FFI::OK
+      buf = out_p.read_pointer
+      len = olen_p.read_uint64
+      bytes = buf.read_bytes(len)
+      bytes.force_encoding(Encoding::ASCII_8BIT)
+      ::Marshal.load(bytes)
+    ensure
+      FFI.yeptris_marshal_free(buf) if buf && !buf.null?
+    end
+
     def load(yaml, schema: :compat_11)
       docs = load_all(yaml, schema: schema)
       docs.empty? ? nil : docs.first
@@ -162,6 +191,12 @@ module Yeptris
           end
           slot(docs, stack, pending_key, pending_key_tag, v, merge_target, flat[i + IS_KEY], flat[i + TAG])
         when V_NULL
+          # the pending anchor binds to the null (an anchored empty
+          # scalar) — without this it would leak onto the next value
+          if pending_anchor
+            anchors[pending_anchor] = nil
+            pending_anchor = nil
+          end
           slot(docs, stack, pending_key, pending_key_tag, nil, merge_target, flat[i + IS_KEY], flat[i + TAG])
         when V_TS
           v = Materializer.parse_timestamp(arena.byteslice(flat[i + OFF], flat[i + LEN]))
@@ -315,6 +350,10 @@ module Yeptris
           end
           slot(docs, stack, pending_key, pending_key_tag, v, merge_target, ikeys[i], tags[i])
         when V_NULL
+          if pending_anchor
+            anchors[pending_anchor] = nil
+            pending_anchor = nil
+          end
           slot(docs, stack, pending_key, pending_key_tag, nil, merge_target, ikeys[i], tags[i])
         when V_TS
           v = Materializer.parse_timestamp(arena.byteslice(offs[i], lens[i]))

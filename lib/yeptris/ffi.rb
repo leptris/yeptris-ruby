@@ -136,6 +136,25 @@ module Yeptris
              :bools, :pointer, :arena, :pointer
     end
 
+    # Marshal 4.8 emission (TODO.restructure/21): the C side converts
+    # value records directly into Ruby's wire format; the binding
+    # materializes the whole graph with one core-C Marshal.load call
+    # instead of walking per-value records in pure Ruby. Same feature-
+    # detect discipline as the columnar drain (older libraries fall
+    # back to the record walk).
+    MARSHAL = begin
+      MARSHAL_ALL_DOCS = 0
+      MARSHAL_FIRST_DOC = 1
+      attach_function :yeptris_marshal,
+                      %i[pointer size_t int int pointer pointer], :int
+      attach_function :yeptris_marshal_node,
+                      %i[yeptris_node pointer pointer], :int
+      attach_function :yeptris_marshal_free, [:pointer], :void
+      true
+    rescue ::FFI::NotFoundError
+      false
+    end
+
     # bulk build (TODO.impl/15 phase D): one call raises a document
     BUILD_SCALAR = 1
     BUILD_SEQ = 2
@@ -229,6 +248,9 @@ module Yeptris
     ERROR_MEMORY = 2
     ERROR_DEPTH = 3
     ERROR_ENCODING = 4
+    ERROR_IO = 5
     ERROR_ARG = 6
+    ERROR_UNSUPPORTED = 7
+    ERROR_INTERNAL = 8
   end
 end

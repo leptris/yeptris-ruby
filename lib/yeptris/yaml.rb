@@ -20,10 +20,14 @@ module Yeptris
       _drain_all(yaml, schema)
     end
 
-    # The columnar drain when the loaded libyeptris has it (>= 0.1.2
-    # era builds), the record drain otherwise — one code path, the
-    # fastest the library offers.
+    # The Marshal fast path when the loaded libyeptris has it (>= 0.1.11
+    # era builds), falling back to the columnar drain and finally the
+    # record drain — one code path, the fastest the library offers.
     def _drain_all(yaml, schema)
+      if FFI::MARSHAL
+        result = ValueML.load_all_marshal(yaml, schema: schema, mode: :all)
+        return result unless result.nil?
+      end
       if FFI::COLUMNS
         ValueML.load_all_columns(yaml, schema: schema)
       else
