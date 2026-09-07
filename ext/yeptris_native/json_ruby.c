@@ -30,6 +30,7 @@ typedef struct {
 } jr;
 
 static VALUE jr_value(jr* j);
+static VALUE jr_object_body(jr* j, VALUE h_pre);
 
 static void jr_ws(jr* j) {
     while (j->i < j->len) {
@@ -45,6 +46,13 @@ static void jr_ws(jr* j) {
  * memoize their hash). The CI referee A/Bs the net sign per arch. */
 enum { YEP_CACHE_ON = 0, YEP_CACHE_OFF = 1 };
 static int yep_cache_mode = YEP_CACHE_ON;
+
+/* Allocation-shape knob (TODO.restructure/39): pre = capa(8) up
+ * front (forces heap buffers even for tiny arrays); natural =
+ * rb_ary_new() so 3-element arrays stay EMBEDDED in the RVALUE, and
+ * bulk-path hashes get exact capacity from the counted pairs. */
+enum { YEP_SHAPE_PRE = 0, YEP_SHAPE_NATURAL = 1 };
+static int yep_shape_mode = YEP_SHAPE_PRE;
 
 static uint64_t jr_hash(const char* sp, long sl) {
     /* 8-byte-prefix key (the leptris nametab trick): one safe load
@@ -140,9 +148,20 @@ static int yep_ins_mode = YEP_INS_BULK;
 
 static VALUE jr_object(jr* j) {
     j->i++; j->depth++;
-    VALUE h = rb_hash_new_capa(8);
+    if (yep_shape_mode == YEP_SHAPE_PRE) {
+        VALUE h = rb_hash_new_capa(8);
+        jr_ws(j);
+        if (j->i < j->len && j->p[j->i] == '}') { j->i++; j->depth--; return h; }
+        return jr_object_body(j, h);
+    }
     jr_ws(j);
-    if (j->i < j->len && j->p[j->i] == '}') { j->i++; j->depth--; return h; }
+    if (j->i < j->len && j->p[j->i] == '}') { j->i++; j->depth--; return rb_hash_new(); }
+    return jr_object_body(j, Qundef); /* created post-loop with exact capa */
+
+    /* NOTREACHED */
+}
+
+static VALUE jr_object_body(jr* j, VALUE h_pre) {
     VALUE pairs[64];
     VALUE* pv = pairs;
     size_t pcap = 64, pn = 0, heap_cap = 0;
@@ -157,7 +176,7 @@ static VALUE jr_object(jr* j) {
         VALUE val = jr_value(j);
         if (j->err) goto out;
         if (yep_ins_mode == YEP_INS_ASET) {
-            rb_hash_aset(h, key, val);
+            rb_hash_aset(h_pre == Qundef ? (h_pre = rb_hash_new_capa(8)) : h_pre, key, val);
         } else {
             if (pn + 2 > pcap) {
                 size_t ncap = pcap * 2;
@@ -177,18 +196,23 @@ static VALUE jr_object(jr* j) {
         j->err = -2; goto out;
     }
     if (yep_ins_mode == YEP_INS_BULK) {
+        VALUE h = (h_pre == Qundef) ? rb_hash_new_capa((long)(pn / 2)) : h_pre;
         rb_hash_bulk_insert((long)pn, (const VALUE*)pv, h);
+        if (pv != pairs) { free(pv); }
+        j->depth--;
+        return h;
     }
+    if (h_pre == Qundef) { h_pre = rb_hash_new_capa(8); }
 out:
     if (pv != pairs) { free(pv); (void)heap_cap; }
     if (j->err) return Qnil;
     j->depth--;
-    return h;
+    return h_pre;
 }
 
 static VALUE jr_array(jr* j) {
     j->i++; j->depth++;
-    VALUE a = rb_ary_new_capa(8);
+    VALUE a = (yep_shape_mode == YEP_SHAPE_NATURAL) ? rb_ary_new() : rb_ary_new_capa(8);
     jr_ws(j);
     if (j->i < j->len && j->p[j->i] == ']') { j->i++; j->depth--; return a; }
     for (;;) {
@@ -257,6 +281,10 @@ static int yep_gc_mode = YEP_GC_DEFAULT;
 int yep_rb_gc_mode(void) { return yep_gc_mode; }
 int yep_rb_ins_mode(void) { return yep_ins_mode; }
 int yep_rb_cache_mode(void) { return yep_cache_mode; }
+int yep_rb_shape_mode(void) { return yep_shape_mode; }
+void yep_rb_set_shape_mode(int mode) {
+    if (mode == YEP_SHAPE_PRE || mode == YEP_SHAPE_NATURAL) yep_shape_mode = mode;
+}
 void yep_rb_set_cache_mode(int mode) {
     if (mode == YEP_CACHE_ON || mode == YEP_CACHE_OFF) yep_cache_mode = mode;
 }
