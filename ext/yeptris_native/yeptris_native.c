@@ -327,6 +327,8 @@ static VALUE native_load_stream(VALUE self, VALUE input, VALUE schema) {
  * in-process. Symbols: :disable, :none, :start. */
 extern int yep_rb_gc_mode(void);
 extern void yep_rb_set_gc_mode(int mode);
+extern int yep_rb_ins_mode(void);
+extern void yep_rb_set_ins_mode(int mode);
 
 static VALUE native_gc_mode(VALUE self) {
     (void)self;
@@ -335,6 +337,21 @@ static VALUE native_gc_mode(VALUE self) {
     case 2: return ID2SYM(rb_intern("start"));
     default: return ID2SYM(rb_intern("disable"));
     }
+}
+
+static VALUE native_ins_mode(VALUE self) {
+    (void)self;
+    return yep_rb_ins_mode() == 1 ? ID2SYM(rb_intern("aset")) : ID2SYM(rb_intern("bulk"));
+}
+
+static VALUE native_ins_mode_set(VALUE self, VALUE mode) {
+    (void)self;
+    Check_Type(mode, T_SYMBOL);
+    ID id = rb_sym2id(mode);
+    if (id == rb_intern("bulk")) yep_rb_set_ins_mode(0);
+    else if (id == rb_intern("aset")) yep_rb_set_ins_mode(1);
+    else rb_raise(rb_eArgError, "ins_mode must be :bulk or :aset");
+    return mode;
 }
 
 static VALUE native_gc_mode_set(VALUE self, VALUE mode) {
@@ -357,8 +374,13 @@ RUBY_FUNC_EXPORTED void Init_native(void) {
     rb_define_singleton_method(mNat, "load_stream", native_load_stream, 2);
     rb_define_singleton_method(mNat, "gc_mode", native_gc_mode, 0);
     rb_define_singleton_method(mNat, "gc_mode=", native_gc_mode_set, 1);
+    rb_define_singleton_method(mNat, "ins_mode", native_ins_mode, 0);
+    rb_define_singleton_method(mNat, "ins_mode=", native_ins_mode_set, 1);
     rb_define_const(mNat, "AVAILABLE", Qtrue);
     const char* env = getenv("YEPTRIS_NATIVE_GC");
     if (env != NULL && strcmp(env, "none") == 0) yep_rb_set_gc_mode(1);
     else if (env != NULL && strcmp(env, "start") == 0) yep_rb_set_gc_mode(2);
+    else if (env != NULL && strcmp(env, "disable") == 0) yep_rb_set_gc_mode(0);
+    const char* ins = getenv("YEPTRIS_NATIVE_INSERT");
+    if (ins != NULL && strcmp(ins, "aset") == 0) yep_rb_set_ins_mode(1);
 }

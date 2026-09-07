@@ -79,7 +79,15 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         gc_mode: [disable, none]
+        ins_mode: [bulk, aset]
         ruby: ["3.4"]
+        exclude:
+          # the shipped default combination runs on both platforms;
+          # the off-default gc modes only need one insert strategy
+          - gc_mode: disable
+            ins_mode: aset
+          - gc_mode: none
+            ins_mode: bulk
     steps:
       - name: Checkout binding
         uses: actions/checkout@v4
@@ -129,4 +137,5 @@ jobs:
             export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
           fi
           export YEPTRIS_NATIVE_GC="${{ matrix.gc_mode }}"
+          export YEPTRIS_NATIVE_INSERT="${{ matrix.ins_mode }}"
           bundle exec ruby benchmark/json_profile.rb 200

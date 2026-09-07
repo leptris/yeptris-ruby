@@ -75,4 +75,20 @@ modes.each do |mode|
               mode.to_s, "", y_min * 1e3, y_med * 1e3, y_mean * 1e3, y_mean / j_mean, wins, N)
   puts format("%-10s json   %-8s %7.3f %8.3f %8.3f   p10/p50/p90 %.2f/%.2f/%.2f",
               "", "", j_min * 1e3, j_med * 1e3, j_mean * 1e3, p10, p50, p90)
+  # GC footprint per parser, attribution-clean (one parser per phase):
+  # the page hypothesis (TODO.restructure/34) predicts the disable
+  # mode grows heap pages where none recycles them.
+  [:yeptris, :json].each do |side|
+    fn = side == :yeptris ? -> { Yeptris::JSON.load(json) } : -> { JSON.parse(json) }
+    GC.start
+    before = GC.stat.slice(:heap_allocated_pages, :minor_gc_count, :major_gc_count)
+    n2 = 50
+    n2.times { fn.call }
+    after = GC.stat.slice(:heap_allocated_pages, :minor_gc_count, :major_gc_count)
+    d_pages = after[:heap_allocated_pages] - before[:heap_allocated_pages]
+    d_minor = after[:minor_gc_count] - before[:minor_gc_count]
+    d_major = after[:major_gc_count] - before[:major_gc_count]
+    puts format("           %-7s gc-footprint(50 iters): pages %+d  minor %d  major %d",
+                side, d_pages, d_minor, d_major)
+  end
 end

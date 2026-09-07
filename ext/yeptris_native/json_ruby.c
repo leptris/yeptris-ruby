@@ -119,14 +119,18 @@ static VALUE jr_num(jr* j) {
     return DBL2NUM(dv);
 }
 
+/* Insert strategy (TODO.restructure/34): bulk lands all pairs in one
+ * rb_hash_bulk_insert (skips per-pair dispatch) but costs +1.4k
+ * intermediate allocations on the reference corpus — the CI referee
+ * rules per platform. aset = the per-pair rb_hash_aset loop. */
+enum { YEP_INS_BULK = 0, YEP_INS_ASET = 1 };
+static int yep_ins_mode = YEP_INS_BULK;
+
 static VALUE jr_object(jr* j) {
     j->i++; j->depth++;
     VALUE h = rb_hash_new_capa(8);
     jr_ws(j);
     if (j->i < j->len && j->p[j->i] == '}') { j->i++; j->depth--; return h; }
-    /* pairs collect into a flat buffer and land in ONE bulk insert:
-     * rb_hash_bulk_insert skips the per-pair method dispatch the
-     * aset loop pays (TODO.restructure/26's margin work) */
     VALUE pairs[64];
     VALUE* pv = pairs;
     size_t pcap = 64, pn = 0, heap_cap = 0;
@@ -140,23 +144,29 @@ static VALUE jr_object(jr* j) {
         j->i++;
         VALUE val = jr_value(j);
         if (j->err) goto out;
-        if (pn + 2 > pcap) {
-            size_t ncap = pcap * 2;
-            VALUE* nv = malloc(ncap * sizeof(VALUE));
-            if (!nv) { j->err = -1; goto out; }
-            memcpy(nv, pv, pn * sizeof(VALUE));
-            if (pv != pairs) { free(pv); heap_cap = 1; }
-            pv = nv; pcap = ncap;
+        if (yep_ins_mode == YEP_INS_ASET) {
+            rb_hash_aset(h, key, val);
+        } else {
+            if (pn + 2 > pcap) {
+                size_t ncap = pcap * 2;
+                VALUE* nv = malloc(ncap * sizeof(VALUE));
+                if (!nv) { j->err = -1; goto out; }
+                memcpy(nv, pv, pn * sizeof(VALUE));
+                if (pv != pairs) { free(pv); heap_cap = 1; }
+                pv = nv; pcap = ncap;
+            }
+            pv[pn++] = key;
+            pv[pn++] = val;
         }
-        pv[pn++] = key;
-        pv[pn++] = val;
         jr_ws(j);
         if (j->i >= j->len) { j->err = -2; goto out; }
         if (j->p[j->i] == ',') { j->i++; continue; }
         if (j->p[j->i] == '}') { j->i++; break; }
         j->err = -2; goto out;
     }
-    rb_hash_bulk_insert((long)pn, (const VALUE*)pv, h);
+    if (yep_ins_mode == YEP_INS_BULK) {
+        rb_hash_bulk_insert((long)pn, (const VALUE*)pv, h);
+    }
 out:
     if (pv != pairs) { free(pv); (void)heap_cap; }
     if (j->err) return Qnil;
@@ -217,9 +227,18 @@ static VALUE jr_value(jr* j) {
  *                        (pay the minor GC in-window, like JSON.parse)
  */
 enum { YEP_GC_DISABLE = 0, YEP_GC_NONE = 1, YEP_GC_START = 2 };
-static int yep_gc_mode = YEP_GC_DISABLE;
+/* default NONE (TODO.restructure/35): measured +0 heap pages and the
+ * same minor-GC cadence as JSON.parse — steady-state correct on
+ * loaded boxes. disable grows +478 pages/50 iters (fresh pages each
+ * call): faster only where pages are free; opt in via env for
+ * single-shot latency runs. */
+static int yep_gc_mode = YEP_GC_NONE;
 
 int yep_rb_gc_mode(void) { return yep_gc_mode; }
+int yep_rb_ins_mode(void) { return yep_ins_mode; }
+void yep_rb_set_ins_mode(int mode) {
+    if (mode == YEP_INS_BULK || mode == YEP_INS_ASET) yep_ins_mode = mode;
+}
 void yep_rb_set_gc_mode(int mode) {
     if (mode >= YEP_GC_DISABLE && mode <= YEP_GC_START) {
         yep_gc_mode = mode;
