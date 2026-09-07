@@ -1,16 +1,37 @@
 # frozen_string_literal: true
 
+require "yeptris/psych" # defines Yeptris::Psych::Encodable before the classes
+
 # Ports of psych's object-serialization half (test_object.rb,
 # test_coder.rb, test_struct.rb, test_set.rb, test_merge_keys
 # object cases) against the Yeptris::Psych drop-in.
+#
+# TODO.restructure/23: arbitrary objects opt in via
+# Yeptris::Psych::Encodable (encode_with / init_with). Generic
+# ivar reflection is gone — the library never reaches into an
+# object's internals from outside its public surface.
 
 class Foo
+  include Yeptris::Psych::Encodable
+
   attr_accessor :one, :two, :three
 
-  def initialize(one, two, three)
+  def initialize(one = nil, two = nil, three = nil)
     @one = one
     @two = two
     @three = three
+  end
+
+  def init_with(coder)
+    @one = coder["one"]
+    @two = coder["two"]
+    @three = coder["three"]
+  end
+
+  def encode_with(coder)
+    coder["one"] = @one
+    coder["two"] = @two
+    coder["three"] = @three
   end
 
   def ==(other)
@@ -19,6 +40,8 @@ class Foo
 end
 
 class CoderObject
+  include Yeptris::Psych::Encodable
+
   attr_accessor :name, :value
 
   def init_with(coder)
@@ -112,6 +135,18 @@ RSpec.describe "Psych port: structs and sets" do
     loaded = Psych.unsafe_load(Psych.dump(obj))
     expect(loaded).to be_a(Object)
     expect(loaded.instance_variables).to be_empty
+  end
+
+  it "refuses to dump a non-Encodable custom class (encapsulation law)" do
+    plain = Class.new
+    expect { Psych.dump(plain.new) }.to raise_error(Yeptris::DumpError, /Encodable/)
+  end
+
+  it "revives a non-Encodable tagged class with DumpError" do
+    plain = Class.new
+    Object.const_set(:RefuseRevive, plain) unless defined?(RefuseRevive)
+    yaml = "--- !ruby/object:RefuseRevive\n__init__: {}\n"
+    expect { Psych.unsafe_load(yaml) }.to raise_error(Yeptris::DumpError, /Encodable/)
   end
 
   it "round-trips Date and Time inside objects" do

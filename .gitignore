@@ -6,3 +6,13 @@ libyeptris.*
 __pycache__/
 coverage/
 *.gem
+# native materializer build artifacts (sources in ext/ are tracked)
+ext/yeptris_native/Makefile
+ext/yeptris_native/*.o
+ext/yeptris_native/*.log
+ext/yeptris_native/*.bundle
+ext/yeptris_native/*.bundle.dSYM
+ext/yeptris_native/*.so
+ext/yeptris_native/*.dll
+lib/yeptris/native.bundle
+lib/yeptris/native.so

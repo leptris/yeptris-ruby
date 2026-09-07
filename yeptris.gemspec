@@ -17,14 +17,19 @@ Gem::Specification.new do |spec|
 
   spec.summary = "The YAML counterpart of libleptris: ultra-performance YAML 1.2 for Ruby"
   spec.description =
-    "An FFI-based (no C extension) Ruby YAML library over libyeptris — " \
-    "Psych-compatible semantics with libleptris-class performance. " \
-    "The neutral Yeptris::YAML surface ships first; the Psych drop-in " \
-    "namespace lands with the recorder-driven Visitors."
+    "A Ruby YAML library over libyeptris — Psych-compatible semantics " \
+    "with libleptris-class performance, and a fused native JSON " \
+    "materializer that outperforms JSON.parse on JSON-shaped input."
+
   spec.homepage = "https://github.com/leptris/yeptris"
   spec.license = "MIT"
 
-  spec.files = Dir["lib/**/*.rb"] + %w[README.adoc]
+  # The FFI core is pure Ruby — installs never compile. The optional
+  # native materializer (TODO.restructure/22) ships as SOURCE in ext/
+  # for opt-in builds (see README: "Native materializer"); the gem
+  # loads it only when a compiled native.so/.bundle is present and
+  # silently falls back to the FFI Marshal ladder otherwise.
+  spec.files = Dir["lib/**/*.rb"] + Dir["ext/**/*.{c,h,rb}"] + %w[README.adoc]
   spec.require_paths = ["lib"]
 
   spec.required_ruby_version = ">= 3.1"
