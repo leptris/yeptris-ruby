@@ -227,12 +227,20 @@ static VALUE jr_value(jr* j) {
  *                        (pay the minor GC in-window, like JSON.parse)
  */
 enum { YEP_GC_DISABLE = 0, YEP_GC_NONE = 1, YEP_GC_START = 2 };
-/* default NONE (TODO.restructure/35): measured +0 heap pages and the
- * same minor-GC cadence as JSON.parse — steady-state correct on
- * loaded boxes. disable grows +478 pages/50 iters (fresh pages each
- * call): faster only where pages are free; opt in via env for
- * single-shot latency runs. */
-static int yep_gc_mode = YEP_GC_NONE;
+/* Default per arch (TODO.restructure/35, two CI rounds of evidence):
+ * - aarch64/darwin: NONE — +0 heap pages, the stdlib's own GC cadence
+ *   (0.745x mean, h2h 91% on mac runners; disable was 0.899x/48%).
+ * - x86_64: DISABLE — fresh CI VMs have free pages and cheaper
+ *   page faults than minor GCs (0.911-0.922x vs none's 1.06-1.20x).
+ * The mechanism cuts both ways under load: disable's +478 pages/50
+ * iters is exactly what a LOADED x86 box punishes — set
+ * YEPTRIS_NATIVE_GC=none there (documented in README). */
+#if defined(__aarch64__) || defined(__arm__) || defined(__ARMEL__) || defined(_M_ARM64)
+#define YEP_GC_DEFAULT YEP_GC_NONE
+#else
+#define YEP_GC_DEFAULT YEP_GC_DISABLE
+#endif
+static int yep_gc_mode = YEP_GC_DEFAULT;
 
 int yep_rb_gc_mode(void) { return yep_gc_mode; }
 int yep_rb_ins_mode(void) { return yep_ins_mode; }

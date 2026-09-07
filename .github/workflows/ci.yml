@@ -71,23 +71,40 @@ jobs:
   # Modes run in SEPARATE processes (env at load); the table prints on
   # every CI run. The gate threshold comes from the evidence and is
   # enforced on the BEST mode below.
+  # The referee (TODO.restructure/36): the per-arch DEFAULT must beat
+  # JSON.parse on both platforms (GATE=1.05); off-default combos run
+  # ungated as evidence.
   json-profile:
-    name: JSON profile (${{ matrix.os }}, ${{ matrix.gc_mode }})
+    name: JSON profile (${{ matrix.os }}, ${{ matrix.gc_mode }}${{ matrix.gated && ', gate' || '' }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        gc_mode: [disable, none]
-        ins_mode: [bulk, aset]
         ruby: ["3.4"]
-        exclude:
-          # the shipped default combination runs on both platforms;
-          # the off-default gc modes only need one insert strategy
-          - gc_mode: disable
-            ins_mode: aset
-          - gc_mode: none
+        include:
+          # defaults: x86_64-linux -> disable; darwin/arm64 -> none
+          - os: ubuntu-latest
+            gc_mode: disable
             ins_mode: bulk
+            gated: true
+          - os: macos-latest
+            gc_mode: none
+            ins_mode: bulk
+            gated: true
+          # off-default evidence rows
+          - os: ubuntu-latest
+            gc_mode: none
+            ins_mode: bulk
+            gated: false
+          - os: macos-latest
+            gc_mode: disable
+            ins_mode: bulk
+            gated: false
+          - os: ubuntu-latest
+            gc_mode: disable
+            ins_mode: aset
+            gated: false
     steps:
       - name: Checkout binding
         uses: actions/checkout@v4
@@ -138,4 +155,5 @@ jobs:
           fi
           export YEPTRIS_NATIVE_GC="${{ matrix.gc_mode }}"
           export YEPTRIS_NATIVE_INSERT="${{ matrix.ins_mode }}"
+          export GATE="${{ matrix.gated && '1.05' || '' }}"
           bundle exec ruby benchmark/json_profile.rb 200
