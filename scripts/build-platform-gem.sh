@@ -39,9 +39,23 @@ else
   RPATH='$ORIGIN/..'
 fi
 cd ext/yeptris_native
+# Distribution link shape (the precompiled-gem standard): NO libruby
+# DT_NEEDED entry (its absolute build-runner path dangles on user
+# machines) - Ruby API symbols resolve from the host ruby process at
+# dlopen. macOS needs -undefined dynamic_lookup; Linux allows
+# undefined by default. Deployment target pinned so runner SDKs newer
+# than users' macOS don't set a newer min-OS.
+if uname -s | grep -q Darwin; then
+  export MACOSX_DEPLOYMENT_TARGET=13.0
+  DLD="-dynamic -bundle -undefined dynamic_lookup"
+else
+  DLD=""
+fi
 YEPTRIS_LIB_PATH="$LIB" YEPTRIS_SRC="$WORK/yeptris-c/src" \
   YEPTRIS_RPATH="$RPATH" ruby extconf.rb
-make
+make LIBRUBYARG_SHARED= LIBRUBYARG_STATIC= DLDFLAGS="$DLD -Wl,-rpath,$RPATH"
+otool -L native.bundle 2>/dev/null | grep -q libruby && { echo "ERROR: libruby still referenced"; exit 1; }
+ldd native.so 2>/dev/null | grep -q libruby && { echo "ERROR: libruby still referenced"; exit 1; } || true
 echo "::endgroup::"
 
 echo "::group::Stage and build the platform gem"
