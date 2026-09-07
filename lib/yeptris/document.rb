@@ -8,9 +8,13 @@ class Yeptris::Document
   # explicit free path and the finalizer both flip the same flag.
   Freed = Struct.new(:state) # :alive | :freed
 
-  def initialize(c_ptr = nil, freed = Freed.new(:alive))
+  # The schema this document was parsed with (a parse property).
+  attr_reader :parse_schema
+
+  def initialize(c_ptr = nil, freed = Freed.new(:alive), parse_schema = :core_12)
     @c_ptr = c_ptr
     @freed = freed
+    @parse_schema = parse_schema
     @readonly = false
     # Strong wrapper cache keyed on the C node address: the same C node
     # always yields the same Ruby object (identity for aliases/eql?),
@@ -37,7 +41,7 @@ class Yeptris::Document
       raise Yeptris::ParseError,
             "parse failed: #{Yeptris::FFI.last_error_message}"
     end
-    wrap(doc)
+    wrap_schema(doc, schema)
   end
 
   def self.parse_json(json)
@@ -47,7 +51,7 @@ class Yeptris::Document
     raise Yeptris::ParseError,
           "json parse failed: #{Yeptris::FFI.last_error_message}" if doc.null?
 
-    wrap(doc)
+    wrap_schema(doc, :core_12) # strict JSON is core by construction
   end
 
   # An empty document for from-scratch construction (TODO.impl/11 p3).
@@ -61,6 +65,14 @@ class Yeptris::Document
   # @api private
   def self.wrap(c_ptr)
     new(c_ptr)
+  end
+
+  # The schema the document was parsed with (:core_12 / :compat_11) —
+  # host scalar policies (Psych's dot-required float) are conditioned
+  # on it. The parse constructors set the real one; plain wrap keeps
+  # the core_12 default (yeptris_parse's default).
+  def self.wrap_schema(c_ptr, schema)
+    new(c_ptr, Freed.new(:alive), schema)
   end
 
   def ensure_alive!
