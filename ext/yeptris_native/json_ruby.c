@@ -26,6 +26,8 @@ typedef struct {
     int depth;
     int err;
     rb_encoding* enc;
+    int strict_dup; /* json gem >= 3: duplicate keys raise (issue #37) */
+    VALUE dup_key;
     kcent kc[YEP_KC];
 } jr;
 
@@ -175,8 +177,14 @@ static VALUE jr_object_body(jr* j, VALUE h_pre) {
         j->i++;
         VALUE val = jr_value(j);
         if (j->err) goto out;
-        if (yep_ins_mode == YEP_INS_ASET) {
-            rb_hash_aset(h_pre == Qundef ? (h_pre = rb_hash_new_capa(8)) : h_pre, key, val);
+        if (yep_ins_mode == YEP_INS_ASET || j->strict_dup) {
+            VALUE h = h_pre == Qundef ? (h_pre = rb_hash_new_capa(8)) : h_pre;
+            if (j->strict_dup && !NIL_P(rb_hash_aref(h, key))) {
+                j->err = -3;
+                j->dup_key = key;
+                goto out;
+            }
+            rb_hash_aset(h, key, val);
         } else {
             if (pn + 2 > pcap) {
                 size_t ncap = pcap * 2;
@@ -312,10 +320,11 @@ double yep_rb_scan_time(const char* p, size_t len, int n) {
     return (double)(t1.tv_sec - t0.tv_sec) + (double)(t1.tv_nsec - t0.tv_nsec) / 1e9;
 }
 
-VALUE yep_rb_parse_json(const char* p, size_t len) {
+VALUE yep_rb_parse_json(const char* p, size_t len, int strict_dup) {
     jr j;
     memset(&j, 0, sizeof(j));
     j.p = p; j.len = len; j.enc = rb_utf8_encoding();
+    j.strict_dup = strict_dup;
     VALUE already = Qtrue;
     if (yep_gc_mode != YEP_GC_NONE) already = rb_gc_disable();
     VALUE v = jr_value(&j);
@@ -325,6 +334,10 @@ VALUE yep_rb_parse_json(const char* p, size_t len) {
     if (already == Qfalse) rb_gc_enable();
     if (yep_gc_mode == YEP_GC_START && j.err == 0) rb_gc_start();
     if (j.err == -1) rb_raise(rb_eNoMemError, "yeptris native json");
+    if (j.err == -3) {
+        rb_raise(rb_path2class("Yeptris::ParseError"), "duplicate key \"%s\" in JSON object",
+                 RSTRING_PTR(j.dup_key));
+    }
     if (j.err != 0) rb_raise(rb_path2class("Yeptris::ParseError"), "native json parse failed");
     return v;
 }

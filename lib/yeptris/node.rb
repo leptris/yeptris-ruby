@@ -340,7 +340,16 @@ class Yeptris::Node
         to_f
       end
     when :timestamp then ::Yeptris::Materializer.parse_timestamp(value)
-    else value
+    else
+      # beyond int64 the C resolver leaves plain scalars :str; Psych
+      # materializes Integer (issue #31) — rebuild from the text
+      text = value.to_s
+      if style == :plain && text.length > 18 &&
+         ::Yeptris::ValueML::PSYCH_INT_SHAPE.match?(text)
+        text.delete(",_").to_i
+      else
+        value
+      end
     end
   end
 

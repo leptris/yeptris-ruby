@@ -14,6 +14,12 @@ module Yeptris
     V_INT = 3
     V_FLOAT = 4
     V_STR = 5
+
+  # Psych's integer shape (scalar_scanner): sign optional, no
+  # leading zero, '_' / ',' separators only between digits. Beyond
+  # int64 the C resolver leaves the scalar a string; Psych
+  # materializes Integer (issue #31) — every walk rebuilds it.
+  PSYCH_INT_SHAPE = /\A[-+]?(?:0|[1-9](?:[0-9]|,[0-9]|_[0-9])*)\z/.freeze
     V_TS = 6
     SEQ_OPEN = 7
     MAP_OPEN = 8
@@ -149,7 +155,10 @@ module Yeptris
           text = arena.byteslice(flat[i + OFF], flat[i + LEN])
           # implicit-plain ':name' scans to a Symbol (Psych's
           # ScalarScanner); quoted ':x' stays a String
-          v = if flat[i + B] == 1 && text.length > 1 &&
+          v = if flat[i + B] == 1 && text.length > 18 &&
+                PSYCH_INT_SHAPE.match?(text)
+                text.delete(",_").to_i
+              elsif flat[i + B] == 1 && text.length > 1 &&
                 text.start_with?(":") && !text.start_with?("::")
                 text[1..].to_sym
               else
@@ -290,7 +299,10 @@ module Yeptris
         case kinds[i]
         when V_STR
           text = arena.byteslice(offs[i], lens[i])
-          v = if bools[i] == 1 && text.length > 1 &&
+          v = if bools[i] == 1 && text.length > 18 &&
+                PSYCH_INT_SHAPE.match?(text)
+                text.delete(",_").to_i
+              elsif bools[i] == 1 && text.length > 1 &&
                 text.start_with?(":") && !text.start_with?("::")
                 text[1..].to_sym
               else
