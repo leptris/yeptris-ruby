@@ -28,7 +28,7 @@ module Yeptris
         dispatch(flat, arena)
         self
       rescue ParseError => e
-        raise SyntaxError, e.message
+        raise SyntaxError.from_parse_error(e)
       end
 
       private

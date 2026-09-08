@@ -17,6 +17,13 @@ module Yeptris
     class Error < ::Yeptris::Error; end
     class ParseError < Error; end
 
+    # json gem 3.0 made duplicate keys an error by DEFAULT; 2.x is
+    # last-wins. The parity target is the RESOLVED json gem's own
+    # behavior — strictness follows it (issue #37, found by canon's
+    # CI where json 3.0.0 resolved while the dev box had 2.x).
+    require "json"
+    STRICT_DUPLICATE_KEYS = Gem::Version.new(::JSON::VERSION) >= Gem::Version.new("3")
+
     module_function
 
     def load(source)
@@ -24,7 +31,7 @@ module Yeptris
       source = source.to_s
       if defined?(::Yeptris::Native)
         begin
-          return ::Yeptris::Native.load_json(source)
+          return ::Yeptris::Native.load_json(source, STRICT_DUPLICATE_KEYS)
         rescue ::Yeptris::ParseError => e
           raise ParseError, e.message
         end
@@ -52,7 +59,7 @@ module Yeptris
         raise ParseError, ::Yeptris::FFI.last_error_message if st != ::Yeptris::FFI::OK
 
         begin
-          walk_strict(cols)
+          walk_strict(cols, STRICT_DUPLICATE_KEYS)
         ensure
           ::Yeptris::FFI.yeptris_value_free_columns(cols)
         end
@@ -65,7 +72,7 @@ module Yeptris
     # is the strict-JSON one (no ':sym' scan, no y/n quirk, no
     # dot-required floats). Anchors/aliases/timestamps cannot occur
     # in strict JSON — reaching them is an internal error.
-    def walk_strict(cols)
+    def walk_strict(cols, strict_dup = STRICT_DUPLICATE_KEYS)
       n = cols[:count]
       kinds = cols[:kinds].read_bytes(n).unpack("C*")
       ikeys = cols[:is_keys].read_bytes(n).unpack("C*")
@@ -78,6 +85,7 @@ module Yeptris
 
       docs = []
       stack = []
+      key_sets = strict_dup ? [{}] : nil
       pending_key = nil
       i = 0
       while i < n
@@ -88,13 +96,19 @@ module Yeptris
           place(docs, stack, pending_key) { [] }
           pending_key = nil
         when ValueML::MAP_OPEN
+          key_sets&.push({})
           place(docs, stack, pending_key) { {} }
           pending_key = nil
         when ValueML::CLOSE
           stack.pop
+          key_sets&.pop
         when ValueML::V_STR
           text = arena.byteslice(offs[i], lens[i])
           if ikeys[i] == 1 && !stack.empty? && stack.last.is_a?(Hash)
+            if strict_dup && key_sets.last.key?(text)
+              raise ParseError, %(duplicate key "#{text}" in JSON object)
+            end
+            key_sets&.last&.store(text, true)
             pending_key = text
           else
             # Records carry int64 payloads: an integer-beyond-int64

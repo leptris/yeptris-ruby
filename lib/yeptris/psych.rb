@@ -30,13 +30,30 @@ module Yeptris
     # object instance exists.
     autoload :Encodable, "yeptris/psych/encodable"
     class Error < StandardError; end
+    # Psych's exact interface (issue #32): same constructor arity,
+    # same reader set (file/line/column/offset/problem/context), same
+    # message shape — drop-in consumers' rescues and constructors
+    # keep working after the rebind.
     class SyntaxError < Error
-      attr_reader :line, :column
+      attr_reader :file, :line, :column, :offset, :problem, :context
 
-      def initialize(message, line = 0, column = 0)
-        super(message)
+      def initialize(file = nil, line = 0, column = 0, offset = 0, problem = nil, context = nil)
+        @file = file
         @line = line
         @column = column
+        @offset = offset
+        @problem = problem
+        @context = context
+        where = file ? "(#{file})" : "(<unknown>)"
+        detail = context ? "#{problem} #{context}" : problem.to_s
+        super("#{where}: #{detail} at line #{line} column #{column}")
+      end
+
+      # Structured lift from the C parser's message (carries
+      # "line L, column C" detail).
+      def self.from_parse_error(error)
+        md = /\bline (\d+),? column (\d+)/.match(error.message)
+        new(nil, md ? md[1].to_i : 0, md ? md[2].to_i : 0, 0, error.message)
       end
     end
     class BadAlias < Error; end
@@ -84,7 +101,7 @@ module Yeptris
 
         Nodes::Builder.document(doc)
       rescue Yeptris::ParseError => e
-        raise SyntaxError, e.message
+        raise SyntaxError.from_parse_error(e)
       end
 
       def parse_stream(yaml)
@@ -101,7 +118,7 @@ module Yeptris
         )
         stream
       rescue Yeptris::ParseError => e
-        raise SyntaxError, e.message
+        raise SyntaxError.from_parse_error(e)
       ensure
         doc&.free if doc && !stream
       end
