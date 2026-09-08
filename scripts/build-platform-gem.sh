@@ -30,8 +30,11 @@ if [ -n "$LOCKSTEP" ]; then
   git checkout --quiet "$LOCKSTEP"
   echo "gem from $LOCKSTEP"
 else
-  echo "no lockstep gem tag v$V.* — aborting platform gem"
-  exit 1
+  # no lockstep binding tag yet (the C release fired before the
+  # binding's): the republish dispatch after the binding tag lands
+  # builds them — a clean skip keeps the release run green
+  echo "no lockstep gem tag v$V.* — skipping platform gems (republish after the binding tag lands)"
+  exit 0
 fi
 if uname -s | grep -q Darwin; then
   RPATH='@loader_path/..'
