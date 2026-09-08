@@ -7,22 +7,43 @@ on:
 
 jobs:
   spec:
-    name: Spec on ${{ matrix.os }}
+    name: Spec on ${{ matrix.os }}${{ matrix.c_main && ' (C main)' || '' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        ruby: ["3.4"]
+        # include-ONLY (top-level keys would MERGE rows); ruby rides
+        # every row. c_main: the optional evidence row against the
+        # C repo's default branch — non-blocking, the C repo's own
+        # CI gates main.
+        include:
+          - os: ubuntu-latest
+            ruby: "3.4"
+          - os: macos-latest
+            ruby: "3.4"
+          - os: ubuntu-latest
+            ruby: "3.4"
+            c_main: true
+    continue-on-error: ${{ matrix.c_main == true }}
     steps:
       - name: Checkout binding
         uses: actions/checkout@v4
+
+      # TODO.restructure/40: the C core rides the NEWEST RELEASE TAG —
+      # the artifact platform gems vendor. Green-on-C-main proved
+      # nothing about the tag (the 0.1.13.5 lesson: the binding suite
+      # was green against main while the gem vendored an older tag).
+      # A binding PR needing a NEWER C API waits for the C release —
+      # enforced ordering, by design.
+      - name: Resolve the C core ref
+        run: echo "YEP_C_REF=$(git ls-remote --tags --refs --sort=-v:refname https://github.com/leptris/yeptris.git 'v*' | head -1 | cut -d/ -f3)" >> "$GITHUB_ENV"
 
       - name: Checkout libyeptris (the C core)
         uses: actions/checkout@v4
         with:
           repository: leptris/yeptris
           path: libyeptris-src
+          ref: ${{ matrix.c_main && 'main' || env.YEP_C_REF }}
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
@@ -130,11 +151,17 @@ jobs:
       - name: Checkout binding
         uses: actions/checkout@v4
 
+      # same tag pin as the spec job: the referee measures the C lib
+      # users get (TODO.restructure/40)
+      - name: Resolve the C core ref
+        run: echo "YEP_C_REF=$(git ls-remote --tags --refs --sort=-v:refname https://github.com/leptris/yeptris.git 'v*' | head -1 | cut -d/ -f3)" >> "$GITHUB_ENV"
+
       - name: Checkout libyeptris (the C core)
         uses: actions/checkout@v4
         with:
           repository: leptris/yeptris
           path: libyeptris-src
+          ref: ${{ env.YEP_C_REF }}
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
