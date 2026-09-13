@@ -240,6 +240,23 @@ module Yeptris
     TAG_NULL = 4
     TAG_TIMESTAMP = 5
 
+    # the schema-descriptor API (issue #238; TODO.restructure/83)
+    DESC_ABI = 1
+    SCHEMA_ERROR = 9
+
+    class DescNode < ::FFI::Struct
+        layout :wire_name, :pointer, :kind, :uint8, :type_tag, :uint8,
+               :flags, :uint16, :child_index, :uint32, :child_count, :uint32,
+               :reserved, :uint32
+      end
+
+    class SchemaColumn < ::FFI::Struct
+        layout :data, :pointer, :capacity, :uint32, :count, :uint32
+    end
+
+    attach_function :yeptris_schema_load,
+                    %i[pointer size_t int pointer uint32 uint32 pointer], :int
+
     SCHEMA_12_CORE = 0
     SCHEMA_11_COMPAT = 1
 
