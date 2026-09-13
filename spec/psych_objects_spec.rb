@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require "yeptris/psych" # defines Yeptris::Psych::Encodable before the classes
+require "yeptris/psych/drop_in" # Encodable first, then the process-exclusive rebind
 
 # Ports of psych's object-serialization half (test_object.rb,
 # test_coder.rb, test_struct.rb, test_set.rb, test_merge_keys
@@ -56,7 +56,7 @@ class CoderObject
 end
 
 RSpec.describe "Psych port: objects" do
-  before(:all) { require "yeptris/psych" }
+  before(:all) { require "yeptris/psych/drop_in" }
 
   it "round-trips an ivar-carrying object (!ruby/object)" do
     foo = Foo.new("a", 1, true)
@@ -105,7 +105,7 @@ RSpec.describe "Psych port: objects" do
 end
 
 RSpec.describe "Psych port: structs and sets" do
-  before(:all) { require "yeptris/psych" }
+  before(:all) { require "yeptris/psych/drop_in" }
 
   it "round-trips a Struct" do
     Struct.new("Point2", :x, :y) unless Struct.const_defined?(:Point2)

@@ -6,8 +6,10 @@ require "set"
 
 # The Psych drop-in namespace (TODO.impl/15 phase C).
 #
-# `require "yeptris/psych"` rebinds the top-level Psych constant to
-# this module (the original, if any, stays reachable as
+# `require "yeptris/psych"` loads this namespace WITHOUT touching the
+# top-level Psych constant (co-existence, issue #69); the process-
+# exclusive drop-in rebind is `require "yeptris/psych/drop_in"` (the
+# original stdlib, if loaded first, stays reachable as
 # ::Psych::ORIGINAL). Semantics follow the Psych suite: load is
 # SAFE by default (Psych 5 behavior — plain data only; anything
 # tagged raises), unsafe_load materializes everything the yeptris
@@ -65,7 +67,10 @@ module Yeptris
         @name = name
       end
     end
-    class AliasNotEnabled < Error; end
+    # Psych spells it Psych::AliasesError; the older name stays as an
+    # alias for existing rescues.
+    class AliasesError < Error; end
+    AliasNotEnabled = AliasesError
 
     class << self
       # Psych 5: load is safe — plain data structures only. Tagged
@@ -146,19 +151,24 @@ module Yeptris
       private
 
       # yeptris materializes plain data only — there is nothing
-      # unsafe it COULD load. The safety walk enforces what Psych
-      # enforces on such documents: aliases need opt-in, and explicit
-      # non-core tags raise DisallowedClass (the only "classes" the
-      # loader can produce are core-schema types, all permitted).
+      # unsafe it COULD load. The safety walk enforces Psych's
+      # contract: aliases need opt-in, explicit non-core tags raise
+      # DisallowedClass, and a scalar whose IMPLICIT typing yields a
+      # class outside the permitted set raises too (issue #69: a
+      # compat_11 date must not become a Date unless Date is
+      # permitted — Psych::DisallowedClass semantics).
       def walk_safe(root, permitted, aliases_enabled)
-        check(root, aliases_enabled) if root
+        check(root, permitted, aliases_enabled) if root
         root.to_ruby
       end
 
-      def check(node, aliases_enabled)
+      PERMITTED_BY_DEFAULT = [TrueClass, FalseClass, NilClass, Integer, Float,
+                              String, Array, Hash].freeze
+
+      def check(node, permitted, aliases_enabled)
         case node.kind
         when :alias
-          raise AliasNotEnabled, "Unknown alias" unless aliases_enabled
+          raise AliasesError, "Unknown alias" unless aliases_enabled
         when :scalar, :mapping, :sequence
           tag = node.tag
           unless tag.nil?
@@ -168,14 +178,18 @@ module Yeptris
               raise DisallowedClass, name
             end
           end
+          if node.kind == :scalar && node.tag_id == :timestamp &&
+             !permitted.include?(Date) && !permitted.include?(Time)
+            raise DisallowedClass, "Date"
+          end
           case node.kind
           when :mapping
             node.each_pair do |k, v|
-              check(k, aliases_enabled)
-              check(v, aliases_enabled)
+              check(k, permitted, aliases_enabled)
+              check(v, permitted, aliases_enabled)
             end
           when :sequence
-            node.each { |e| check(e, aliases_enabled) }
+            node.each { |e| check(e, permitted, aliases_enabled) }
           end
         end
       end
@@ -346,14 +360,9 @@ module Yeptris
   end
 end
 
-# The drop-in: rebind the top-level constant ( Psych-stdlib, if
-# already loaded, stays reachable as Yeptris::Psych::ORIGINAL).
-if defined?(::Psych) && !::Psych.equal?(Yeptris::Psych) &&
-   !Yeptris::Psych.const_defined?(:ORIGINAL, false)
-  Yeptris::Psych.const_set(:ORIGINAL, ::Psych)
-end
-# class_eval reaches Module-private methods WITHOUT send (the law:
-# no send to private methods); remove_const has no public form, and
-        # the rebind is this namespace's whole purpose
-        Object.class_eval { remove_const(:Psych) } if defined?(::Psych)
-::Psych = Yeptris::Psych
+# The drop-in is OPT-IN (issue #69): `require "yeptris/psych"` loads
+# the namespace only and coexists with stdlib psych in ANY load
+# order (this file never touches ::Psych). The rebind lives in
+# yeptris/psych/drop_in — process-exclusive by nature, since the
+# stdlib cannot be prevented from re-opening whatever ::Psych points
+# at once IT loads.

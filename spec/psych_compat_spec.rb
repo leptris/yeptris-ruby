@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 RSpec.describe "Yeptris::Psych drop-in" do
-  before(:all) { require "yeptris/psych" }
+  before(:all) { require "yeptris/psych/drop_in" }
 
   it "rebinds the top-level Psych constant" do
     expect(::Psych).to equal(Yeptris::Psych)
@@ -66,5 +66,65 @@ RSpec.describe "readonly documents" do
     obj = first
     expect(obj["b"]).to equal(obj["c"])
     expect(obj["b"]).to equal(obj["a"]) # aliases all one object
+  end
+end
+
+RSpec.describe "Yeptris::Psych co-existence (issue #69)" do
+  lib = File.expand_path("../lib", __dir__)
+
+  ours_first = <<~RUBY
+    require "yeptris"
+    require "yeptris/psych"
+    require "psych" # stdlib AFTER ours: the order that clobbered pre-#69
+    raise "rebound!" if ::Psych.equal?(Yeptris::Psych)
+    raise "stdlib broken" unless ::Psych.load("a: 1") == { "a" => 1 }
+    raise "ours broken" unless Yeptris::Psych.load("a: 1") == { "a" => 1 }
+  RUBY
+
+  stdlib_first = <<~RUBY
+    require "psych"
+    require "yeptris"
+    require "yeptris/psych" # ours AFTER stdlib: the other clobbered order
+    raise "rebound!" if ::Psych.equal?(Yeptris::Psych)
+    raise "stdlib broken" unless ::Psych.load("a: 1") == { "a" => 1 }
+    raise "ours broken" unless Yeptris::Psych.load("a: 1") == { "a" => 1 }
+  RUBY
+
+  drop_in_check = <<~RUBY
+    require "yeptris/psych/drop_in"
+    raise "not rebound" unless ::Psych.equal?(Yeptris::Psych)
+    raise "load broken" unless Psych.load("a: 1") == { "a" => 1 }
+  RUBY
+
+  def run_script(lib, code)
+    system(Gem.ruby, "-I", lib, "-e", code)
+  end
+
+  it "coexists when stdlib psych loads AFTER yeptris/psych" do
+    expect(run_script(lib, ours_first)).to be(true)
+  end
+
+  it "coexists when stdlib psych loads FIRST" do
+    expect(run_script(lib, stdlib_first)).to be(true)
+  end
+
+  it "still rebinds when the drop-in is explicitly requested" do
+    expect(run_script(lib, drop_in_check)).to be(true)
+  end
+end
+
+RSpec.describe "Yeptris::YAML.safe_load (issue #69)" do
+  it "permits plain data by default and rejects non-permitted classes" do
+    expect(Yeptris::YAML.safe_load("a: 1\nb: [x, ~]\n")).to eq("a" => 1, "b" => ["x", nil])
+    expect { Yeptris::YAML.safe_load("d: 2020-01-02\n") }
+      .to raise_error(Yeptris::Psych::DisallowedClass, /Date/)
+    expect(Yeptris::YAML.safe_load("d: 2020-01-02\n", permitted_classes: [Date]))
+      .to eq("d" => Date.new(2020, 1, 2))
+  end
+
+  it "rejects aliases unless allowed" do
+    expect { Yeptris::YAML.safe_load("a: &x 1\nb: *x\n") }
+      .to raise_error(Yeptris::Psych::AliasesError)
+    expect(Yeptris::YAML.safe_load("a: &x 1\nb: *x\n", aliases: true)).to eq("a" => 1, "b" => 1)
   end
 end
