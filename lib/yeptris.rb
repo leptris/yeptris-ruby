@@ -43,6 +43,13 @@ module Yeptris
   autoload :Materializer, "yeptris/materializer"
   autoload :ValueML, "yeptris/valueml"
   autoload :Psych, "yeptris/psych"
+  autoload :Schema, "yeptris/schema"
+
+  # The safe_load error names, aliased at the top level so consumers
+  # writing rescues need no nesting knowledge (issue #73's naming
+  # note): Yeptris::DisallowedClass is Yeptris::Psych::DisallowedClass.
+  DisallowedClass = Psych::DisallowedClass
+  AliasesError = Psych::AliasesError
 end
 
 # Eager native-library resolution (leptris-ruby lesson): fail at
