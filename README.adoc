@@ -116,11 +116,26 @@ without compiling).
   (`Node#to_ruby` becomes bulk). Alias identity preserved through
   object links; merge keys and timestamps return UNSUPPORTED for the
   record-walk fallback.
-* `Yeptris::Psych` — the drop-in namespace with the ported Psych
-  suite (143 specs), `.tml` corpora conformance, and the Encodable
-  object protocol (`include Yeptris::Psych::Encodable` +
+* `Yeptris::Psych` — the Psych-compatible namespace with the ported
+  Psych suite (143 specs), `.tml` corpora conformance, and the
+  Encodable object protocol (`include Yeptris::Psych::Encodable` +
   `encode_with`/`init_with` — no `respond_to?`, no ivar reflection;
   the library never reaches into an object's internals).
+** CO-EXISTENCE (issue #69): `require "yeptris/psych"` loads the
+   namespace WITHOUT touching the top-level `Psych` constant — it
+   coexists with stdlib psych in ANY load order. The process-
+   exclusive drop-in rebind (`::Psych = Yeptris::Psych`) is now
+   OPT-IN: `require "yeptris/psych/drop_in"`. Once the drop-in runs,
+   stdlib psych must NOT be loaded afterwards (its require re-opens
+   the rebound module and clobbers constants). Bundles that cannot
+   control the load order (activesupport et al.) should use
+   `Yeptris::Psych` / `Yeptris::YAML` directly.
+** `Yeptris::YAML.safe_load(yaml, permitted_classes: [], aliases:
+   false)` — Psych's safe_load semantics on the native surface:
+   plain data by default; a leaf that would materialize to a
+   non-permitted class (a compat_11 date) raises
+   `Yeptris::Psych::DisallowedClass`; alias use without `aliases:
+   true` raises `Yeptris::Psych::AliasesError`.
 * Lockstep versioning with the C library
   (`{c-semver}.{gem-patch}`); releases published from the C repo's
   workflow through the RubyGems trusted publisher.

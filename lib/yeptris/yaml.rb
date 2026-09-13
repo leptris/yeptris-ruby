@@ -22,6 +22,17 @@ module Yeptris
       docs.empty? ? nil : docs.first
     end
 
+    # Psych-semantics safe_load on the native surface (issue #69 —
+    # the entry frameworks actually want): plain data only; a leaf
+    # whose class is not permitted raises Yeptris::Psych::
+    # DisallowedClass; aliases: false raises Yeptris::Psych::
+    # AliasesError on alias use. Delegates to the compat namespace's
+    # tree walk (correctness first; the fused drain comes later).
+    def safe_load(yaml, permitted_classes: [], aliases: false, schema: :compat_11)
+      yaml = Yeptris.read_input(yaml)
+      Psych.safe_load(yaml.to_s, permitted_classes: permitted_classes, aliases: aliases)
+    end
+
     # Every document in the stream, in order.
     def load_stream(yaml, schema: :compat_11)
       yaml = Yeptris.read_input(yaml)
