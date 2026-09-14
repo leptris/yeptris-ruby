@@ -39,3 +39,35 @@ RSpec.describe "Yeptris::JSON.dump" do
     expect { Yeptris::JSON.dump(Object.new) }.to raise_error(Yeptris::JSON::DumpError)
   end
 end
+
+RSpec.describe "Yeptris::JSON.tape_engine (the FFI tier)" do
+  # Native, when built, shadows the tape engine in every load-path
+  # spec — the release smoke (source gem, no bundle) is the only other
+  # place it runs. This forces the FFI tier directly.
+  it "matches JSON.parse on randomized documents" do
+    srand(4242)
+    300.times do
+      src = JSON.generate(
+        Hash[(0...15).map do |i|
+          ["k#{i}", [rand, rand(10**12), nil, true, false, "s#{i}", 1e-3 * i,
+                     {"n" => [i, -i]}][rand(8)]]
+        end]
+      )
+      expect(Yeptris::JSON.tape_engine(src)).to eq(JSON.parse(src))
+    end
+  end
+
+  it "handles scalar roots and float shapes" do
+    expect(Yeptris::JSON.tape_engine('{"a": 1e3}')).to eq({"a" => 1000.0})
+    expect(Yeptris::JSON.tape_engine("3.5")).to eq(3.5)
+    expect(Yeptris::JSON.tape_engine("42")).to eq(42)
+    expect(Yeptris::JSON.tape_engine("true")).to eq(true)
+    expect(Yeptris::JSON.tape_engine("null")).to eq(nil)
+    expect(Yeptris::JSON.tape_engine('"solo"')).to eq("solo")
+  end
+
+  it "rebuilds exact bignums" do
+    expect(Yeptris::JSON.tape_engine('{"b": 92233720368547758089999}'))
+      .to eq({"b" => 92233720368547758089999})
+  end
+end

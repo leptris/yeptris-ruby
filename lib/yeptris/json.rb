@@ -73,7 +73,7 @@ module Yeptris
       lens = tape[:lens].read_bytes(n * 4).unpack("V*")
       raw = tape[:vals].read_bytes(n * 8)
       vals_i = raw.unpack("q<*")
-      vals_f = raw.unpack("E")
+      vals_f = raw.unpack("E*")
       # any integer text beyond int64: every INT rebuilds from its span
       # (exact Bignum; JSON.parse parity)
       exact_ints = !tape[:int_min].zero?
