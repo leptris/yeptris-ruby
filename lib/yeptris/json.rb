@@ -297,26 +297,15 @@ module Yeptris
     # and null stay plain), Symbols become their name.
     class DumpError < Error; end
 
-    ENTRY_BYTES = 12
-    MAP_ENTRY = [::Yeptris::FFI::BUILD_MAP, 0, 0, 0].pack("CCx2VV").freeze
-    SEQ_ENTRY = [::Yeptris::FFI::BUILD_SEQ, 0, 0, 0].pack("CCx2VV").freeze
-    END_ENTRY = [::Yeptris::FFI::BUILD_END, 0, 0, 0].pack("CCx2VV").freeze
-    CONT_ENTRY = { ::Yeptris::FFI::BUILD_MAP => MAP_ENTRY, ::Yeptris::FFI::BUILD_SEQ => SEQ_ENTRY,
-                   ::Yeptris::FFI::BUILD_END => END_ENTRY }.freeze
-
     def dump(obj)
-      parts = []
+      parts = String.new(encoding: Encoding::BINARY,
+                         capacity: 12 * 16) # 12-byte entries, appended in place
       blob = String.new(encoding: Encoding::BINARY)
       off = [0]
-      emit = lambda do |op, style, o, len|
-        parts << (o.zero? && len.zero? && style.zero? ? CONT_ENTRY[op] :
-                    [op, style, o, len].pack("CCx2VV"))
-      end
-      place_obj(obj, emit, blob, off)
+      place_obj(obj, parts, blob, off)
       doc = ::Yeptris::Document.create
-      buf = ::FFI::MemoryPointer.from_string(parts.join)
-      bblob = ::FFI::MemoryPointer.from_string(blob)
-      rc = doc.build_entries(buf, parts.length, bblob, blob.bytesize)
+      # FFI passes String args BY REFERENCE — no MemoryPointer copies
+      rc = doc.build_entries(parts, parts.bytesize / 12, blob, blob.bytesize)
       raise DumpError, "document_build failed: #{rc}" unless rc == ::Yeptris::FFI::OK
       out = ::Yeptris::FFI::JSON_EX ? doc.serialize_json_compact : doc.serialize_json
       # JSON.generate emits no trailing newline (the document writer does)
@@ -325,37 +314,51 @@ module Yeptris
       doc&.free
     end
 
-    def place_obj(obj, emit, blob, off)
+    F = ::Yeptris::FFI
+    MAP_E = [F::BUILD_MAP, 0, 0, 0].pack("CCx2VV").freeze
+    SEQ_E = [F::BUILD_SEQ, 0, 0, 0].pack("CCx2VV").freeze
+    END_E = [F::BUILD_END, 0, 0, 0].pack("CCx2VV").freeze
+    DQ = F::STYLE_DOUBLE_QUOTED
+    PL = F::STYLE_PLAIN
+    SC_DQ = [F::BUILD_SCALAR, DQ].pack("CCx2").freeze
+    SC_PL = [F::BUILD_SCALAR, PL].pack("CCx2").freeze
+
+    def place_obj(obj, parts, blob, off)
       case obj
       when Hash
-        emit.call(::Yeptris::FFI::BUILD_MAP, 0, 0, 0)
+        parts << MAP_E
         obj.each do |k, v|
           key = k.is_a?(String) ? k : k.is_a?(Symbol) ? k.name : k.to_s
-          scalar_json(key, ::Yeptris::FFI::STYLE_DOUBLE_QUOTED, emit, blob, off)
-          place_obj(v, emit, blob, off)
+          scalar_json(key, SC_DQ, parts, blob, off)
+          place_obj(v, parts, blob, off)
         end
-        emit.call(::Yeptris::FFI::BUILD_END, 0, 0, 0)
+        parts << END_E
       when Array
-        emit.call(::Yeptris::FFI::BUILD_SEQ, 0, 0, 0)
-        obj.each { |e| place_obj(e, emit, blob, off) }
-        emit.call(::Yeptris::FFI::BUILD_END, 0, 0, 0)
+        parts << SEQ_E
+        obj.each { |e| place_obj(e, parts, blob, off) }
+        parts << END_E
       when String
-        scalar_json(obj, ::Yeptris::FFI::STYLE_DOUBLE_QUOTED, emit, blob, off)
+        scalar_json(obj, SC_DQ, parts, blob, off)
       when Symbol
-        scalar_json(obj.name, ::Yeptris::FFI::STYLE_DOUBLE_QUOTED, emit, blob, off)
-      when Integer, Float, true, false, nil
-        text = obj.nil? ? "null" : obj.to_s
-        scalar_json(text, ::Yeptris::FFI::STYLE_PLAIN, emit, blob, off)
+        scalar_json(obj.name, SC_DQ, parts, blob, off)
+      when Integer, Float
+        scalar_json(obj.to_s, SC_PL, parts, blob, off)
+      when true
+        scalar_json("true", SC_PL, parts, blob, off)
+      when false
+        scalar_json("false", SC_PL, parts, blob, off)
+      when nil
+        scalar_json("null", SC_PL, parts, blob, off)
       when Date, Time
-        scalar_json(obj.iso8601, ::Yeptris::FFI::STYLE_DOUBLE_QUOTED, emit, blob, off)
+        scalar_json(obj.iso8601, SC_DQ, parts, blob, off)
       else
         raise DumpError, "cannot dump #{obj.class}: unsupported object " \
                          "(JSON.generate calls to_json on custom types)"
       end
     end
 
-    def scalar_json(text, style, emit, blob, off)
-      emit.call(::Yeptris::FFI::BUILD_SCALAR, style, off[0], text.bytesize)
+    def scalar_json(text, prefix, parts, blob, off)
+      parts << (prefix + [off[0], text.bytesize].pack("VV"))
       blob << text
       off[0] += text.bytesize
     end
