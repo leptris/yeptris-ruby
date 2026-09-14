@@ -79,11 +79,11 @@ module Yeptris
       exact_ints = !tape[:int_min].zero?
       utf8 = src.encoding == Encoding::UTF_8
 
-      docs = []
+      docs = [nil] # record 0 (DOC) pre-consumed — the root's slot
       stack = []
       key_sets = STRICT_DUPLICATE_KEYS ? [{}] : nil
       pending_key = nil
-      i = 1 # record 0 is the DOC boundary
+      i = 1
       while i < n
         case kinds[i]
         when T_SEQ_OPEN
