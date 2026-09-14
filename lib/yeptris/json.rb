@@ -54,6 +54,55 @@ module Yeptris
     T_MAP_OPEN = 7
     T_CLOSE = 8
 
+    # The tape keeps RAW string spans (escapes untouched — the C
+    # contract); the walk decodes them here. The hot path (no
+    # backslash) returns the slice untouched.
+    SIMPLE_ESCAPES = {
+      '"' => '"'.b, "\\" => "\\".b, "/" => "/".b, "b" => "\b".b, "f" => "\f".b,
+      "n" => "\n".b, "r" => "\r".b, "t" => "\t".b
+    }.freeze
+
+    def decode_span(src, off, len)
+      s = src.byteslice(off, len)
+      s.force_encoding(Encoding::UTF_8)
+      return s unless s.include?("\\")
+
+      b = s.b
+      out = +"".b
+      i = 0
+      n = b.bytesize
+      while i < n
+        c = b.getbyte(i)
+        if c != 0x5C || i + 1 >= n
+          out << c
+          i += 1
+          next
+        end
+        e = b.getbyte(i + 1)
+        if e != 0x75 # simple escape
+          ch = e.chr
+          out << (SIMPLE_ESCAPES[ch] || ch)
+          i += 2
+          next
+        end
+        cp = b.byteslice(i + 2, 4).to_i(16)
+        if cp >= 0xD800 && cp <= 0xDBFF && i + 12 <= n &&
+           b.getbyte(i + 6) == 0x5C && b.getbyte(i + 7) == 0x75
+          lo = b.byteslice(i + 8, 4).to_i(16)
+          if lo >= 0xDC00 && lo <= 0xDFFF
+            cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00)
+            i += 12
+          else
+            i += 6
+          end
+        else
+          i += 6
+        end
+        out << [cp].pack("U").b
+      end
+      out.force_encoding(Encoding::UTF_8)
+    end
+
     def tape_engine(source)
       tape = ::Yeptris::FFI::JsonTape.new
       rc = ::Yeptris::FFI.yeptris_parse_json_tape(source, source.bytesize, tape)
@@ -97,8 +146,7 @@ module Yeptris
           stack.pop
           key_sets&.pop
         when T_STR
-          text = src.byteslice(offs[i], lens[i])
-          text.force_encoding(Encoding::UTF_8) unless utf8
+          text = lens[i] == 0 ? +"".force_encoding(Encoding::UTF_8) : decode_span(src, offs[i], lens[i])
           if pending_key.nil? && !stack.empty? && stack.last.is_a?(Hash)
             if key_sets && key_sets.last.key?(text)
               raise ParseError, %(duplicate key "#{text}" in JSON object)
