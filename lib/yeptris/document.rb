@@ -153,6 +153,11 @@ class Yeptris::Document
     Yeptris::FFI::Owned.string(ptr, len)
   end
 
+  def serialize_json_compact
+    len = ::FFI::MemoryPointer.new(:uint64)
+    Yeptris::FFI::Owned.string(Yeptris::FFI.yeptris_serialize_json_ex(@c_ptr, len, 1), len)
+  end
+
   def serialize_json
     ensure_alive!
     len = ::FFI::MemoryPointer.new(:uint64)
