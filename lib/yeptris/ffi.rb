@@ -59,6 +59,17 @@ module Yeptris
                     %i[pointer size_t pointer yeptris_status_out], :yeptris_document
     attach_function :yeptris_parse_json, %i[pointer size_t yeptris_status_out], :yeptris_document
 
+    # The JSON tape (TODO.restructure/85; the JSON surface's load
+    # engine — issue #81): ONE call, four bulk columns, spans borrow
+    # the caller's string (no arena copy, no second validating parse).
+    class JsonTape < ::FFI::Struct
+      layout :count, :size_t, :kinds, :pointer, :offs, :pointer,
+             :lens, :pointer, :vals, :pointer, :int_min, :int64, :_block, :pointer
+    end
+
+    attach_function :yeptris_parse_json_tape, %i[pointer size_t pointer], :int
+    attach_function :yeptris_tape_free, [:pointer], :void
+
     attach_function :yeptris_document_free, [:yeptris_document], :void
     attach_function :yeptris_document_count, [:yeptris_document], :size_t
     attach_function :yeptris_document_root, [:yeptris_document, :size_t], :yeptris_node
@@ -173,6 +184,15 @@ module Yeptris
     attach_function :yeptris_serialize_ex,
                     %i[yeptris_document pointer pointer], :pointer
     attach_function :yeptris_serialize_json, %i[yeptris_document pointer], :pointer
+
+    # compact JSON generation (JSON.generate's shape); absent on
+    # libraries before v0.2.5 — the JSON surface feature-detects
+    JSON_EX = begin
+      attach_function :yeptris_serialize_json_ex, %i[yeptris_document pointer int], :pointer
+      true
+    rescue ::FFI::NotFoundError
+      false
+    end
 
     # Owned char* results (serialize*): one reader, freed exactly once.
     # The buffers are plain malloc'd C memory (the header contract says
