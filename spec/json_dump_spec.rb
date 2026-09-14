@@ -71,3 +71,18 @@ RSpec.describe "Yeptris::JSON.tape_engine (the FFI tier)" do
       .to eq({"b" => 92233720368547758089999})
   end
 end
+
+RSpec.describe "Yeptris::JSON.tape_engine escape decoding" do
+  it "decodes \\u escapes, surrogate pairs, and simple escapes like JSON.parse" do
+    inputs = [
+      '{"u": "\\u00e9\\ud83d\\ude00"}',
+      '{"k": "\\u0041\\n\\t\\"\\\\\\/"}',
+      '{"b": "\\b\\f\\r"}',
+      '{"mix": "héllo \\u0041 😀"}',
+      '{"zero": "\\u0000x"}'
+    ]
+    inputs.each do |src|
+      expect(Yeptris::JSON.tape_engine(src)).to eq(JSON.parse(src))
+    end
+  end
+end
