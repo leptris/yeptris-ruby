@@ -70,8 +70,21 @@ end
 # Optional C-API materializer (TODO.restructure/22): fused visit →
 # Ruby objects via the Ruby C API. Feature-detected — LoadError leaves
 # the FFI ladder (Marshal → columns → records) as the sole path.
+# Windows names the artifact per Ruby minor (the leptris-ruby #207/
+# #227 lesson): a PE DLL must bind its build Ruby's runtime, so one
+# DLL per supported minor ships and RUBY_VERSION selects. A missing
+# cell (Ruby 3.3 arm64 has no build) falls back LOUDLY to the ladder.
 begin
-  require "yeptris/native"
-rescue LoadError
+  if Gem.win_platform?
+    require "yeptris/native-#{RUBY_VERSION[/\A\d+\.\d+/]}"
+  else
+    require "yeptris/native"
+  end
+rescue LoadError => e
+  if Gem.win_platform?
+    warn "yeptris: no precompiled native materializer for Ruby " \
+         "#{RUBY_VERSION[/\A\d+\.\d+/]} on this platform " \
+         "(#{e.message}); the FFI ladder carries the load"
+  end
   # FFI ladder only
 end
