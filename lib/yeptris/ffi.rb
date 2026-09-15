@@ -60,15 +60,19 @@ module Yeptris
     attach_function :yeptris_parse_json, %i[pointer size_t yeptris_status_out], :yeptris_document
 
     # The JSON tape (TODO.restructure/85; the JSON surface's load
-    # engine — issue #81): ONE call, four bulk columns, spans borrow
+    # engine — issue #81): ONE call, three bulk columns, spans borrow
     # the caller's string (no arena copy, no second validating parse).
+    # v2 records: numbers are spans at parse; yeptris_tape_convert
+    # materializes them in one bulk call.
     class JsonTape < ::FFI::Struct
       layout :count, :size_t, :kinds, :pointer, :offs, :pointer,
-             :lens, :pointer, :vals, :pointer, :int_min, :int64, :_block, :pointer
+             :lens, :pointer, :int_min, :int64, :_src, :pointer, :_srclen, :size_t,
+             :_block, :pointer
     end
 
     attach_function :yeptris_parse_json_tape, %i[pointer size_t pointer], :int
     attach_function :yeptris_tape_free, [:pointer], :void
+    attach_function :yeptris_tape_convert, %i[pointer size_t size_t pointer pointer], :size_t
 
     attach_function :yeptris_document_free, [:yeptris_document], :void
     attach_function :yeptris_document_count, [:yeptris_document], :size_t
