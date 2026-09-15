@@ -46,13 +46,14 @@ module Yeptris
     # three, which is where medium/large throughput went).
     T_DOC = 0
     T_NULL = 1
-    T_BOOL = 2
-    T_INT = 3
-    T_FLOAT = 4
-    T_STR = 5
-    T_SEQ_OPEN = 6
-    T_MAP_OPEN = 7
-    T_CLOSE = 8
+    T_TRUE = 2
+    T_FALSE = 3
+    T_INT = 4
+    T_FLOAT = 5
+    T_STR = 6
+    T_SEQ_OPEN = 7
+    T_MAP_OPEN = 8
+    T_CLOSE = 9
 
     # The tape keeps RAW string spans (escapes untouched — the C
     # contract); the walk decodes them here. The hot path (no
@@ -120,11 +121,16 @@ module Yeptris
       kinds = tape[:kinds].read_bytes(n).unpack("C*")
       offs = tape[:offs].read_bytes(n * 4).unpack("V*")
       lens = tape[:lens].read_bytes(n * 4).unpack("V*")
-      raw = tape[:vals].read_bytes(n * 8)
-      vals_i = raw.unpack("q<*")
-      vals_f = raw.unpack("E*")
+      # v2: parse records number spans only — ONE bulk convert call
+      # materializes them (per-number FFI calls would sink the ladder)
+      ivp = ::FFI::MemoryPointer.new(:int64, n, true)
+      dvp = ::FFI::MemoryPointer.new(:double, n, true)
+      ::Yeptris::FFI.yeptris_tape_convert(tape, 0, n, ivp, dvp)
+      vals_i = ivp.read_bytes(n * 8).unpack("q<*")
+      vals_f = dvp.read_bytes(n * 8).unpack("E*")
       # any integer text beyond int64: every INT rebuilds from its span
-      # (exact Bignum; JSON.parse parity)
+      # (exact Bignum; JSON.parse parity) — int_min is set by the
+      # convert call above
       exact_ints = !tape[:int_min].zero?
       utf8 = src.encoding == Encoding::UTF_8
 
@@ -169,9 +175,8 @@ module Yeptris
           v = vals_f[i]
           place(docs, stack, pending_key) { v }
           pending_key = nil
-        when T_BOOL
-          v = vals_i[i] == 1
-          place(docs, stack, pending_key) { v }
+        when T_TRUE, T_FALSE # v2: the kind IS the value
+          place(docs, stack, pending_key) { kinds[i] == T_TRUE }
           pending_key = nil
         when T_NULL
           place(docs, stack, pending_key) { nil }
