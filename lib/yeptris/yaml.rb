@@ -1,5 +1,9 @@
 # frozen_string_literal: true
 
+# Self-sufficient (issue #95): the neutral surface is a valid entry
+# point on its own — lutaml-model requires exactly this file.
+require "yeptris"
+
 module Yeptris
   # The neutral Ruby surface (the Psych-compat namespace arrives with
   # the recorder-driven Visitors in phase B; this is the yeptris-native
@@ -95,6 +99,7 @@ module Yeptris
       MAP = Yeptris::FFI::BUILD_MAP
       STOP = Yeptris::FFI::BUILD_END
       STYLE_PLAIN = 1
+      STYLE_SQ = 2
       STYLE_DQ = 3
 
       module_function
@@ -133,7 +138,14 @@ module Yeptris
           cycle_guard(obj, seen) do
             emit.call(MAP, 0, 0, 0)
             obj.each do |k, v|
-              place(key_text(k), emit, blob, off, seen)
+              # Symbol keys emit as bare ":k" plain — the compat
+              # reader resolves them back to Symbols; string keys
+              # ride the visit_String rules like any other scalar
+              if k.is_a?(Symbol)
+                scalar(":#{k}", STYLE_PLAIN, emit, blob, off)
+              else
+                place(k.to_s, emit, blob, off, seen)
+              end
               place(v, emit, blob, off, seen)
             end
             emit.call(STOP, 0, 0, 0)
@@ -144,12 +156,12 @@ module Yeptris
             obj.each { |e| place(e, emit, blob, off, seen) }
             emit.call(STOP, 0, 0, 0)
           end
-        when String then scalar(obj, plain_string?(obj), emit, blob, off)
-        when Symbol then scalar(":#{obj}", true, emit, blob, off)
-        when Integer, Float then scalar(obj.to_s, true, emit, blob, off)
-        when true, false then scalar(obj.to_s, true, emit, blob, off)
-        when nil then scalar("null", true, emit, blob, off)
-        when Date, Time then scalar(obj.iso8601, true, emit, blob, off)
+        when String then scalar(obj, STYLE_BY_NAME[string_style(obj)], emit, blob, off)
+        when Symbol then scalar(":#{obj}", STYLE_PLAIN, emit, blob, off)
+        when Integer, Float then scalar(obj.to_s, STYLE_PLAIN, emit, blob, off)
+        when true, false then scalar(obj.to_s, STYLE_PLAIN, emit, blob, off)
+        when nil then scalar("null", STYLE_PLAIN, emit, blob, off)
+        when Date, Time then scalar(obj.iso8601, STYLE_PLAIN, emit, blob, off)
         else
           raise DumpError,
                 "cannot dump #{obj.class}: unsupported object " \
@@ -157,12 +169,12 @@ module Yeptris
         end
       end
 
-      def scalar(text, plain, emit, blob, off)
+      def scalar(text, style, emit, blob, off)
         # a BINARY blob absorbs any String bytewise (String#<< on
         # ASCII-8BIT is compatible with every encoding) — the old
         # text.b made a throwaway copy of every scalar before the
         # blob's own copy
-        emit.call(SCALAR, plain ? STYLE_PLAIN : STYLE_DQ, off[0], text.bytesize)
+        emit.call(SCALAR, style, off[0], text.bytesize)
         blob << text
         off[0] += text.bytesize
       end
@@ -200,13 +212,38 @@ module Yeptris
         return false if s.include?(": ") || s.end_with?(":") || s.include?(" #")
         return false if RESHAPES_SET[s]
         # compat's float grammar REQUIRES the dot ("1e3" re-reads as a
-        # String and may dump plain); ints/sexagesimals still reshape
+        # String and may dump plain); ints/sexagesimals still reshape.
+        # psych's FLOAT has no trailing [.:] group — "1.2.3" is a
+        # String and dumps plain (pinned by spec/yaml_spec.rb)
         return false if s.match?(/\A[-+]?(0|[1-9][0-9_]*)(:[0-5]?[0-9])+\z/)
         return false if s.match?(/\A[-+]?(0|[1-9][0-9_]*)\z/)
-        return false if s.match?(/\A[-+]?[0-9][0-9_]*\.[0-9_]*([eE][-+]?[0-9]+)?([.:][0-9_:.]*)?\z/)
+        return false if s.match?(/\A[-+]?[0-9][0-9_]*\.[0-9_]*([eE][-+]?[0-9]+)?\z/)
+        return false if s.match?(/\A[-+]?[0-9][0-9_]*(:[0-5]?[0-9])+\.[0-9_]*\z/)
         return false if s.match?(/\A[-+]?(0x[0-9a-fA-F_]+|0b[01_]+|0o?[0-7_]+)\z/)
         return false if s.match?(/\A[-+]?\.(inf|Inf|INF)\z|\A\.(nan|NaN|NAN)\z/)
         !s.match?(/\A\d{4}-\d\d?-\d\d?([Tt ]|$)/)
+      end
+
+      # Psych parity (psych yaml_tree#visit_String) — the quoting
+      # decision for a String, in psych's own order:
+      #   y/Y/n/N (the 1.1 bool words psych double-quotes) → double
+      #   a leading non-word character, no " anywhere          → double
+      #   a 1.1 bad-octal shape (0[0-7]*[89])                 → single
+      #   re-loads as something other than String (plain_string?
+      #   rejects the 1.1 number/bool/null/timestamp shapes)   → single
+      #   needs escapes (control bytes, multiline)             → double
+      #   otherwise                                            → plain
+      # psych's literal/folded/binary forms and its !!str tag for
+      # "<<" are follow-ups; those strings double-quote today.
+      STYLE_BY_NAME = { plain: STYLE_PLAIN, single: STYLE_SQ, double: STYLE_DQ }.freeze
+
+      def string_style(s)
+        return :double if s == "y" || s == "Y" || s == "n" || s == "N"
+        return :double if !s.empty? && !s.include?('"') && s.match?(/\A[^[:word:]]/)
+        return :single if s.match?(/\A0[0-7]*[89]/)
+        return :plain if plain_string?(s)
+        return :double if s.each_byte.any? { |b| b < 0x20 || b == 0x7f }
+        :single
       end
 
       def cycle_guard(obj, seen)
@@ -257,12 +294,15 @@ module Yeptris
         end
       end
 
-      # A plain scalar that re-resolves to STR stays plain (nice
-      # round-trips); anything ambiguous is double-quoted so the
-      # reparse yields String again.
+      # One quoting table (BulkBuilder.string_style — psych's
+      # visit_String matrix) serves both builders; this side carries
+      # the style onto the per-node DOM.
       def build_string(doc, s)
-        n = new_scalar(doc, s)
-        n.tag_id == :str ? n : new_scalar(doc, s, :force_str)
+        case BulkBuilder.string_style(s)
+        when :single then new_scalar(doc, s, :force_str_sq)
+        when :double then new_scalar(doc, s, :force_str)
+        else new_scalar(doc, s)
+        end
       end
 
       def key_text(k)
@@ -272,7 +312,8 @@ module Yeptris
 
       def new_scalar(doc, text, mode = nil)
         doc.new_scalar(text.to_s,
-                       mode == :force_str ? :double_quoted : :plain)
+                       mode == :force_str ? :double_quoted :
+                       mode == :force_str_sq ? :single_quoted : :plain)
       end
 
       def cycle_guard(obj, seen)

@@ -9,8 +9,9 @@
 RSpec.describe "Yeptris::Psych.dump document marker" do
   it "emits the leading marker for collections" do
     expect(Yeptris::Psych.dump("version" => "1.2.3")).to eq("---\nversion: 1.2.3\n")
+    expect(Yeptris::Psych.dump("tech_note_number" => "5014")).to eq("---\ntech_note_number: '5014'\n")
     expect(Yeptris::Psych.dump([1, 2])).to eq("---\n- 1\n- 2\n")
-    expect(Yeptris::Psych.dump("a" => { "b" => [true] })).to eq("---\na:\n  b:\n    - true\n")
+    expect(Yeptris::Psych.dump("a" => { "b" => [true] })).to eq("---\na:\n  b:\n  - true\n")
   end
 
   it "rides scalar roots on the marker line (libyaml form)" do

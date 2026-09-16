@@ -366,3 +366,12 @@ end
 # yeptris/psych/drop_in — process-exclusive by nature, since the
 # stdlib cannot be prevented from re-opening whatever ::Psych points
 # at once IT loads.
+# 0.4-contract migration signal (issue #95): this require used to
+# rebind ::Psych. It does not anymore, and re-binding it here would
+# regress #69 (any stdlib psych loaded afterwards would explode with
+# a superclass mismatch), so the old path warns instead of acting.
+if defined?(::Psych) && !::Psych.equal?(Yeptris::Psych)
+  warn "yeptris: \"yeptris/psych\" defines the namespace only — it no " \
+       "longer rebinds ::Psych. Require \"yeptris/psych/drop_in\" for the " \
+       "drop-in rebind, or call Yeptris::Psych explicitly."
+end

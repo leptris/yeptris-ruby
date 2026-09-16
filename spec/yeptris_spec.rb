@@ -45,7 +45,7 @@ RSpec.describe Yeptris::Document do
     root.map_add("list", seq)
     seq.seq_add(doc.new_scalar("1"))
     seq.seq_add(doc.new_scalar("2", :double_quoted))
-    expect(doc.serialize).to eq("list:\n  - 1\n  - \"2\"\n")
+    expect(doc.serialize).to eq("list:\n- 1\n- \"2\"\n")
     doc.free
   end
 end
@@ -175,7 +175,7 @@ RSpec.describe Yeptris::YAML do
 
   it "dumps scalars round-trip" do
     expect(described_class.dump("plain")).to eq("plain\n")
-    expect(described_class.dump("12")).to eq("\"12\"\n")
+    expect(described_class.dump("12")).to eq("'12'\n") # psych's visit_String: type-ambiguous → single
     expect(described_class.dump(42)).to eq("42\n")
     expect(described_class.dump(2.5)).to eq("2.5\n")
     expect(described_class.dump(true)).to eq("true\n")
