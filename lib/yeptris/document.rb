@@ -137,15 +137,16 @@ class Yeptris::Document
     Yeptris::FFI.yeptris_document_build(@c_ptr, entries, count, blob, blob_len)
   end
 
-  def serialize(canonical: false, best_width: 0)
+  def serialize(canonical: false, best_width: 0, explicit_doc_start: false)
     ensure_alive!
     len = ::FFI::MemoryPointer.new(:uint64)
     ptr =
-      if canonical || best_width.positive?
+      if canonical || best_width.positive? || explicit_doc_start
         opts = Yeptris::FFI::EmitOptions.new
         opts[:size] = Yeptris::FFI::EmitOptions.size
         opts[:canonical] = canonical ? 1 : 0
         opts[:best_width] = best_width
+        opts[:explicit_doc_start] = explicit_doc_start ? 1 : 0
         Yeptris::FFI.yeptris_serialize_ex(@c_ptr, opts, len)
       else
         Yeptris::FFI.yeptris_serialize(@c_ptr, len)

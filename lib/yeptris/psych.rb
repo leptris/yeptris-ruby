@@ -138,7 +138,7 @@ module Yeptris
         out =
           case obj
           when nil, true, false, ::String, ::Integer, ::Float, ::Symbol, ::Date, ::Time
-            Yeptris::YAML.dump(obj)
+            Yeptris::YAML.dump(obj, header: true)
           else
             Visitors::YAMLTree.new.push(obj).finish
           end
