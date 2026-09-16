@@ -34,7 +34,7 @@ module Yeptris
         def visit(obj)
           case obj
           when nil, true, false, ::Integer, ::Float, ::String then scalar(obj)
-          when ::Symbol then scalar(":#{obj}")
+          when ::Symbol then @tree.new_scalar(":#{obj}", :plain) # psych emits symbols bare, never through visit_String's quoting rules
           when ::Date, ::Time then scalar(obj) # timestamp text, never ivars
           when ::Hash then visit_hash(obj)
           when ::Array then visit_array(obj)
