@@ -47,7 +47,8 @@ module Yeptris
     class EmitOptions < ::FFI::Struct
       layout :size, :uint32,
              :canonical, :int,
-             :best_width, :int
+             :best_width, :int,
+             :explicit_doc_start, :int
     end
 
     attach_function :yeptris_version, [], :string

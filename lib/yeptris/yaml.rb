@@ -76,8 +76,8 @@ module Yeptris
     # (TODO.impl/11 phase 3). Strings are emitted plain only when the
     # resolver round-trips them as strings — everything else takes a
     # quoted style, so dump(load(x)) == x for the scalar types.
-    def dump(obj, canonical: false)
-      BulkBuilder.dump(obj, canonical: canonical)
+      def dump(obj, canonical: false, header: false)
+      BulkBuilder.dump(obj, canonical: canonical, header: header)
     end
 
 
@@ -107,7 +107,7 @@ module Yeptris
                      Yeptris::FFI::BUILD_SEQ => SEQ_ENTRY,
                      Yeptris::FFI::BUILD_END => END_ENTRY }.freeze
 
-      def dump(obj, canonical: false)
+      def dump(obj, canonical: false, header: false)
         parts = []
         blob = String.new(encoding: Encoding::BINARY)
         off = [0]
@@ -122,7 +122,7 @@ module Yeptris
         bblob = ::FFI::MemoryPointer.from_string(blob)
         rc = doc.build_entries(buf, parts.length, bblob, blob.bytesize)
         raise DumpError, "document_build failed: #{rc}" unless rc == FFI::OK
-        doc.serialize(canonical: canonical)
+        doc.serialize(canonical: canonical, explicit_doc_start: header)
       ensure
         doc&.free
       end

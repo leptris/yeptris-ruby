@@ -28,7 +28,7 @@ module Yeptris
         end
 
         def finish
-          @tree.serialize
+          @tree.serialize(explicit_doc_start: true)
         end
 
         def visit(obj)

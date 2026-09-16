@@ -52,7 +52,7 @@ RSpec.describe "Yeptris::Psych drop-in" do
   end
 
   it "dump writes through the yeptris builder" do
-    expect(Psych.dump("a" => 1)).to eq("a: 1\n")
+    expect(Psych.dump("a" => 1)).to eq("---\na: 1\n")
   end
 end
 
@@ -128,3 +128,4 @@ RSpec.describe "Yeptris::YAML.safe_load (issue #69)" do
     expect(Yeptris::YAML.safe_load("a: &x 1\nb: *x\n", aliases: true)).to eq("a" => 1, "b" => 1)
   end
 end
+
