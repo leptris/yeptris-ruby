@@ -109,7 +109,7 @@ if [ "$IS_WINDOWS" = "1" ]; then
   # refuse a Windows gem with none (the loud FFI fallback is per-minor
   # acceptable, never wholesale)
   echo "::group::Verify Windows native DLLs"
-  count=$(ls ../lib/yeptris/native-*.so 2>/dev/null | wc -l)
+  count=$(ls ../../lib/yeptris/native-*.so 2>/dev/null | wc -l)
   if [ "$count" -lt 1 ]; then
     echo "ERROR: no native-<minor>.so staged (expected the workflow's per-minor builds)"
     exit 1
