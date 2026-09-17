@@ -245,15 +245,37 @@ module Yeptris
           new.visit(node)
         end
 
+        # stdlib ToRuby#accept's domain post-pass: normalize the tag
+        # (strip leading !//, ensure tag: unless x-private) and run the
+        # registered block over the revived result (#95 thread)
+        def apply_domain_type(result, node)
+          return result if node.tag.nil? || node.tag.empty?
+
+          key = node.tag.sub(/\A[!\/]*/, "").sub(/(,\d+)\//, '\1:')
+          key = "tag:#{key}" unless key.match?(/\A(?:tag:|x-private)/)
+          entry = ::Yeptris::Psych.domain_types[key]
+          return result unless entry
+
+          _value, block = entry
+          block.call(key, result)
+        end
+
         def visit(node)
           @root ||= node
-          case node
-          when ::Yeptris::Psych::Nodes::Alias then visit_alias(node)
-          when ::Yeptris::Psych::Nodes::Scalar then visit_scalar(node)
-          when ::Yeptris::Psych::Nodes::Sequence then visit_sequence(node)
-          when ::Yeptris::Psych::Nodes::Mapping then visit_mapping(node)
-          else node&.to_ruby
+          result =
+            case node
+            when ::Yeptris::Psych::Nodes::Alias then visit_alias(node)
+            when ::Yeptris::Psych::Nodes::Scalar then visit_scalar(node)
+            when ::Yeptris::Psych::Nodes::Sequence then visit_sequence(node)
+            when ::Yeptris::Psych::Nodes::Mapping then visit_mapping(node)
+            else node&.to_ruby
+            end
+          # the domain-types post-pass (stdlib ToRuby#accept's tail):
+          # registered blocks transform the revived result per node
+          if node && !::Yeptris::Psych.domain_types.empty?
+            result = apply_domain_type(result, node)
           end
+          result
         end
 
         private
