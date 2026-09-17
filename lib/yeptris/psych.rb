@@ -184,7 +184,15 @@ module Yeptris
 
       # Arbitrary object graphs through the YAMLTree visitor
       # (anchors, !ruby/ tags); plain data rides the fast builder.
-      def dump(obj, io = nil)
+      def dump(obj, io = nil, options = {})
+        # stdlib's Object#to_yaml calls Psych.dump(self, options) —
+        # the options hash lands in the io slot positionally; treat a
+        # Hash there as options (the options themselves ride the
+        # visitor's defaults, #95 thread)
+        if io.is_a?(::Hash)
+          options = io
+          io = nil
+        end
         # scalars take the fast builder; EVERYTHING else (including
         # plain containers — they may nest custom objects) goes
         # through the visitor, which builds the same DOM for plain
@@ -420,6 +428,20 @@ end
 # yeptris/psych/drop_in — process-exclusive by nature, since the
 # stdlib cannot be prevented from re-opening whatever ::Psych points
 # at once IT loads.
+# The core extension (stdlib psych/core_ext parity): Object#to_yaml
+# and Object.yaml_tag exist whether the consumer came through stdlib
+# psych first or pure drop-in. Both definitions are compatible —
+# whoever loads last wins, and both call the rebound Psych.dump.
+class Object
+  def self.yaml_tag(url)
+    ::Yeptris::Psych.add_tag(url, self)
+  end
+
+  def to_yaml(options = {})
+    ::Yeptris::Psych.dump(self, options)
+  end
+end
+
 # 0.4-contract migration signal (issue #95): this require used to
 # rebind ::Psych. It does not anymore, and re-binding it here would
 # regress #69 (any stdlib psych loaded afterwards would explode with
