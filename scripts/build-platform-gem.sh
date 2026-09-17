@@ -108,8 +108,15 @@ if [ "$IS_WINDOWS" = "1" ]; then
   # workflow builds them under each minor BEFORE this script runs —
   # refuse a Windows gem with none (the loud FFI fallback is per-minor
   # acceptable, never wholesale)
+  # the packaging Ruby's own minor rides too (the workflow's
+  # per-minor steps cover the OTHERS; this build binds this Ruby's
+  # runtime). find, not ls|wc: pipefail aborts the assignment when ls
+  # matches nothing (the sixth leg run died at the verify with the
+  # gem fully built)
+  MINOR=$(ruby -e 'print RUBY_VERSION[/\A\d+\.\d+/]')
+  cp native.so ../../lib/yeptris/native-"$MINOR".so
   echo "::group::Verify Windows native DLLs"
-  count=$(ls ../../lib/yeptris/native-*.so 2>/dev/null | wc -l)
+  count=$(find ../../lib/yeptris -maxdepth 1 -name 'native-*.so' 2>/dev/null | wc -l)
   if [ "$count" -lt 1 ]; then
     echo "ERROR: no native-<minor>.so staged (expected the workflow's per-minor builds)"
     exit 1
