@@ -32,9 +32,32 @@ module Yeptris
           @tree.set_root(root) if root
           self
         end
+        alias_method :<<, :push # stdlib's dump body pushes via <<
+
+        # stdlib Psych.dump's tail: `visitor.tree.yaml io, options` —
+        # the tree wraps the built document; yaml serializes it
+        # (string return, or writes + returns the io)
+        def tree
+          BuiltDocument.new(@tree)
+        end
 
         def finish
           @tree.serialize(explicit_doc_start: true)
+        end
+
+        # The built-document handle stdlib's dump tail serializes
+        class BuiltDocument
+          def initialize(doc)
+            @doc = doc
+          end
+
+          def yaml(io = nil, _options = {})
+            out = @doc.serialize(explicit_doc_start: true)
+            return out unless io
+
+            io.write(out)
+            io
+          end
         end
 
         def visit(obj)
