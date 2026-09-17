@@ -101,8 +101,21 @@ module Yeptris
       STYLE_PLAIN = 1
       STYLE_SQ = 2
       STYLE_DQ = 3
+      STYLE_LIT = 4
 
       module_function
+
+      # Psych's float spelling (#290): Infinity/NAN ride the YAML words,
+      # not Ruby's to_s (which prints "Infinity"/"NaN" — a STRING on
+      # reload)
+      def float_text(f)
+        return ".nan" if f.respond_to?(:nan?) && f.nan?
+        case (inf = f.infinite?)
+        when 1 then ".inf"
+        when -1 then "-.inf"
+        else f.to_s
+        end
+      end
 
       # container entries are constant bytes — no pack per op
       MAP_ENTRY = [Yeptris::FFI::BUILD_MAP, 0, 0, 0].pack("CCx2VV").freeze
@@ -141,10 +154,17 @@ module Yeptris
               # Symbol keys emit as bare ":k" plain — the compat
               # reader resolves them back to Symbols; string keys
               # ride the visit_String rules like any other scalar
+              # Symbol keys emit as bare ":k" plain — the compat
+              # reader resolves them back to Symbols; Integer/Float/
+              # bool keys ride plain like their values (Psych emits
+              # 1: unquoted — #290 family 5); string keys ride the
+              # visit_String rules like any other scalar
               if k.is_a?(Symbol)
                 scalar(":#{k}", STYLE_PLAIN, emit, blob, off)
+              elsif k.is_a?(String)
+                place(k, emit, blob, off, seen)
               else
-                place(k.to_s, emit, blob, off, seen)
+                scalar(k.to_s, STYLE_PLAIN, emit, blob, off)
               end
               place(v, emit, blob, off, seen)
             end
@@ -158,9 +178,10 @@ module Yeptris
           end
         when String then scalar(obj, STYLE_BY_NAME[string_style(obj)], emit, blob, off)
         when Symbol then scalar(":#{obj}", STYLE_PLAIN, emit, blob, off)
-        when Integer, Float then scalar(obj.to_s, STYLE_PLAIN, emit, blob, off)
+        when Integer then scalar(obj.to_s, STYLE_PLAIN, emit, blob, off)
+        when Float then scalar(float_text(obj), STYLE_PLAIN, emit, blob, off)
         when true, false then scalar(obj.to_s, STYLE_PLAIN, emit, blob, off)
-        when nil then scalar("null", STYLE_PLAIN, emit, blob, off)
+        when nil then scalar("", STYLE_PLAIN, emit, blob, off)
         when Date, Time then scalar(obj.iso8601, STYLE_PLAIN, emit, blob, off)
         else
           raise DumpError,
@@ -235,9 +256,14 @@ module Yeptris
       #   otherwise                                            → plain
       # psych's literal/folded/binary forms and its !!str tag for
       # "<<" are follow-ups; those strings double-quote today.
-      STYLE_BY_NAME = { plain: STYLE_PLAIN, single: STYLE_SQ, double: STYLE_DQ }.freeze
+      STYLE_BY_NAME = { plain: STYLE_PLAIN, single: STYLE_SQ, double: STYLE_DQ,
+                        literal: STYLE_LIT }.freeze
 
       def string_style(s)
+        # psych's visit_String: any interior newline rides a literal
+        # block (the C writer's libyaml indicator rules render it) —
+        # first, exactly as psych orders it (#290 family 4)
+        return :literal if s.match?(/\n(?!\z)/)
         return :double if s == "y" || s == "Y" || s == "n" || s == "N"
         return :double if !s.empty? && !s.include?('"') && s.match?(/\A[^[:word:]]/)
         return :single if s.match?(/\A0[0-7]*[89]/)
@@ -267,9 +293,10 @@ module Yeptris
         when Array then build_seq(doc, obj, seen)
         when String then build_string(doc, obj)
         when Symbol then new_scalar(doc, ":#{obj}")
-        when Integer, Float then new_scalar(doc, obj.to_s)
+        when Integer then new_scalar(doc, obj.to_s)
+        when Float then new_scalar(doc, BulkBuilder.float_text(obj))
         when true, false then new_scalar(doc, obj.to_s)
-        when nil then new_scalar(doc, "null")
+        when nil then new_scalar(doc, "")
         when Date, Time then new_scalar(doc, obj.iso8601)
         else
           raise DumpError,
@@ -301,6 +328,7 @@ module Yeptris
         case BulkBuilder.string_style(s)
         when :single then new_scalar(doc, s, :force_str_sq)
         when :double then new_scalar(doc, s, :force_str)
+        when :literal then new_scalar(doc, s, :force_lit)
         else new_scalar(doc, s)
         end
       end
@@ -313,7 +341,8 @@ module Yeptris
       def new_scalar(doc, text, mode = nil)
         doc.new_scalar(text.to_s,
                        mode == :force_str ? :double_quoted :
-                       mode == :force_str_sq ? :single_quoted : :plain)
+                       mode == :force_str_sq ? :single_quoted :
+                       mode == :force_lit ? :literal : :plain)
       end
 
       def cycle_guard(obj, seen)
