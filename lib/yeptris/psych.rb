@@ -17,6 +17,28 @@ require "set"
 # document without materializing.
 module Yeptris
   module Psych
+    # The tag registries (Psych's class-level API, #95 bug 4):
+    # load_tags maps a serialized tag to the Class that revives it;
+    # dump_tags overrides the emitted tag for a Class. Consulted by
+    # the revival visitor (custom tags) and the dumper's tag choice.
+    class << self
+      def load_tags
+        @load_tags ||= {}
+      end
+
+      def load_tags=(tags)
+        @load_tags = tags
+      end
+
+      def dump_tags
+        @dump_tags ||= {}
+      end
+
+      def dump_tags=(tags)
+        @dump_tags = tags
+      end
+    end
+
     # Children load via autoload declared HERE — the immediate parent
     # namespace's file (never internal requires).
     autoload :Handler, "yeptris/psych/handler"

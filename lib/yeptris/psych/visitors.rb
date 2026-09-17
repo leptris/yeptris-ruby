@@ -120,6 +120,8 @@ module Yeptris
               "" # libyaml's null rendering rides bare (issue #290)
             elsif obj.is_a?(::Float)
               ::Yeptris::YAML::BulkBuilder.float_text(obj)
+            elsif obj.is_a?(::Time)
+              ::Yeptris::YAML::BulkBuilder.time_text(obj)
             else
               obj.to_s
             end
@@ -204,7 +206,8 @@ module Yeptris
           end
           m = @tree.new_mapping
           m.set_anchor(name) if name
-          m.set_tag("!ruby/object:#{obj.class.name}")
+          custom = ::Yeptris::Psych.dump_tags[obj.class]
+          m.set_tag(custom || "!ruby/object:#{obj.class.name}")
           m.map_add("__init__", init)
           remember(obj, m)
           m
@@ -331,7 +334,13 @@ module Yeptris
             klass = resolve_class(Regexp.last_match(1).to_s)
             revive_object(klass, node)
           else
-            hash_into({}, node)
+            # Psych.load_tags first (the class registry, #95 bug 4);
+            # anything else stays the plain mapping
+            if (klass = ::Yeptris::Psych.load_tags[tag])
+              revive_tagged(klass, node)
+            else
+              hash_into({}, node)
+            end
           end
         end
 
@@ -341,6 +350,23 @@ module Yeptris
             h[visit(k)] = visit(v)
           end
           h
+        end
+
+        # A load_tags-registered class revives from the mapping's own
+        # top-level pairs (Psych's coder semantics — no __init__
+        # wrapper, which is OUR encoder's internal convention)
+        def revive_tagged(klass, node)
+          raise ::Yeptris::DumpError,
+                "#{klass} is not Yeptris::Psych::Encodable: implement init_with(coder)" unless klass <= ::Yeptris::Psych::Encodable
+
+          obj = klass.allocate
+          anchors[node.anchor] = obj if node.anchor
+          coder = ::Yeptris::Psych::CoderShim.new
+          node.children.each_slice(2) do |k, v|
+            coder[k.to_ruby.to_s] = visit(v)
+          end
+          obj.init_with(coder)
+          obj
         end
 
         def revive_object(klass, node)
