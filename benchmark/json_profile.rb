@@ -85,8 +85,12 @@ modes.each do |mode|
               "", "", j_min * 1e3, j_med * 1e3, j_mean * 1e3, p10, p50, p90)
   gate = ENV["GATE"].to_s
   unless gate.empty?
-    if (y_mean / j_mean) >= gate.to_f
-      warn(format("GATE FAILED: mean ratio %.3fx >= %s", y_mean / j_mean, gate))
+    # the MEDIAN carries the contract — the mean is outlier-dominated
+    # on shared runners (the json side's own p50->p90 spread runs
+    # ~20%), which straddled a 1%-margin threshold on release-PR
+    # reruns. Same ratio, same threshold, noise-robust statistic.
+    if (y_med / j_med) >= gate.to_f
+      warn(format("GATE FAILED: median ratio %.3fx >= %s", y_med / j_med, gate))
       exit 1
     end
   end
