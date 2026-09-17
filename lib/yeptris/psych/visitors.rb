@@ -12,6 +12,12 @@ module Yeptris
       # objects, aliases for repeats, the Encodable protocol, and the
       # !ruby/... tags Psych's own emitter produces.
       class YAMLTree
+        # stdlib's factory (relaton's db cache calls it): the options
+        # ride our visitor defaults
+        def self.create(options = {}, emitter = nil)
+          new
+        end
+
         def initialize
           @tree = ::Yeptris::Document.create
           @names = {}  # object_id -> anchor name
@@ -142,7 +148,17 @@ module Yeptris
           m = @tree.new_mapping
           remember(hash, m)
           m.set_anchor(name) if name
-          hash.each { |k, v| m.map_add(key_text(k), visit(v)) }
+          hash.each do |k, v|
+            if k.nil?
+              # Psych's nil-key form: `! ''` — the explicit tag on an
+              # empty single-quoted key (#300 family 2)
+              key_node = @tree.new_scalar("", :single_quoted)
+              key_node.set_tag("!")
+              m.map_add_node(key_node, visit(v))
+            else
+              m.map_add(key_text(k), visit(v))
+            end
+          end
           m
         end
 
