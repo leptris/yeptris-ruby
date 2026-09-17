@@ -91,6 +91,17 @@ module Yeptris
     attach_function :yeptris_plan_result_str_lens, %i[pointer size_t], :pointer
     attach_function :yeptris_plan_result_nulls, %i[pointer size_t], :pointer
 
+    # the DOM (YAML) leg of the plan walk (#293 slice three): same
+    # compiled plan over a parsed document; str columns expose
+    # (ptr,len) views into the document's regions
+    attach_function :yeptris_document_plan_walk, %i[yeptris_document pointer pointer], :pointer
+    attach_function :yeptris_plan_result_strs, %i[pointer size_t], :pointer
+
+    # yeptris_plan_str (plan.h): one string view
+    class PlanStr < ::FFI::Struct
+      layout :p, :pointer, :len, :size_t
+    end
+
     attach_function :yeptris_document_free, [:yeptris_document], :void
     attach_function :yeptris_document_count, [:yeptris_document], :size_t
     attach_function :yeptris_document_root, [:yeptris_document, :size_t], :yeptris_node
