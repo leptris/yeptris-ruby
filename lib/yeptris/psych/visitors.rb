@@ -116,8 +116,12 @@ module Yeptris
           text =
             if obj.is_a?(::Date) || obj.is_a?(::Time)
               obj.iso8601 # canonical timestamp form, not to_s
+            elsif obj.nil?
+              "" # libyaml's null rendering rides bare (issue #290)
+            elsif obj.is_a?(::Float)
+              ::Yeptris::YAML::BulkBuilder.float_text(obj)
             else
-              obj.nil? ? "null" : obj.to_s
+              obj.to_s
             end
           n =
             if obj.is_a?(::String)

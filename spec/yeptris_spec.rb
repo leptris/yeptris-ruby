@@ -179,7 +179,7 @@ RSpec.describe Yeptris::YAML do
     expect(described_class.dump(42)).to eq("42\n")
     expect(described_class.dump(2.5)).to eq("2.5\n")
     expect(described_class.dump(true)).to eq("true\n")
-    expect(described_class.dump(nil)).to eq("null\n")
+    expect(described_class.dump(nil)).to eq("\n") # nil rides bare (libyaml null rendering, #290)
   end
 
   it "dumps structures round-trip" do
