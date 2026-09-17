@@ -75,6 +75,22 @@ module Yeptris
     attach_function :yeptris_tape_free, [:pointer], :void
     attach_function :yeptris_tape_convert, %i[pointer size_t size_t pointer pointer], :size_t
 
+    # the compiled plan walk (#293 / TODO.restructure/87): compile a
+    # strict-JSON spec once, apply it to a parsed tape in one C pass,
+    # read the typed COLUMNAR result
+    attach_function :yeptris_plan_compile, %i[pointer size_t pointer], :pointer
+    attach_function :yeptris_plan_free, [:pointer], :void
+    attach_function :yeptris_plan_column_count, [:pointer], :size_t
+    attach_function :yeptris_tape_plan_walk, %i[pointer pointer pointer], :pointer
+    attach_function :yeptris_plan_result_free, [:pointer], :void
+    attach_function :yeptris_plan_result_rows, [:pointer], :size_t
+    attach_function :yeptris_plan_result_kind, %i[pointer size_t], :int
+    attach_function :yeptris_plan_result_ints, %i[pointer size_t], :pointer
+    attach_function :yeptris_plan_result_floats, %i[pointer size_t], :pointer
+    attach_function :yeptris_plan_result_str_offs, %i[pointer size_t], :pointer
+    attach_function :yeptris_plan_result_str_lens, %i[pointer size_t], :pointer
+    attach_function :yeptris_plan_result_nulls, %i[pointer size_t], :pointer
+
     attach_function :yeptris_document_free, [:yeptris_document], :void
     attach_function :yeptris_document_count, [:yeptris_document], :size_t
     attach_function :yeptris_document_root, [:yeptris_document, :size_t], :yeptris_node
