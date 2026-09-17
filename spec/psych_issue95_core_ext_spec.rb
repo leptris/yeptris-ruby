@@ -38,4 +38,24 @@ RSpec.describe "rebind surface: to_yaml and YAMLTree.create" do
     tree.push([1, nil])
     expect(tree.finish).to eq("---\n- 1\n-\n")
   end
+
+  it "the stdlib << emitter face pushes" do
+    tree = ::Yeptris::Psych::Visitors::YAMLTree.create({})
+    tree << { "a" => 1 }
+    expect(tree.finish).to eq("---\na: 1\n")
+  end
+
+  it "tree.yaml is stdlib dump's serialization tail" do
+    tree = ::Yeptris::Psych::Visitors::YAMLTree.create({})
+    tree << { "a" => [1, "two"] }
+    expect(tree.tree.yaml).to eq(::Psych.dump("a" => [1, "two"]))
+
+    io = StringIO.new
+    expect(tree.tree.yaml(io)).to equal(io)
+    expect(io.string).to eq(::Psych.dump("a" => [1, "two"]))
+  end
+
+  it "Psych.dump's stdlib two-arg Hash shape routes to options" do
+    expect(::Psych.dump({ "a" => 1 }, {})).to eq("---\na: 1\n")
+  end
 end
