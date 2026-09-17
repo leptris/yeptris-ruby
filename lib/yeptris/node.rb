@@ -201,6 +201,17 @@ class Yeptris::Node
     self
   end
 
+  # A pre-built key NODE ( Psych parity: nil keys ride the explicit
+  # `!` tag on an empty single-quoted scalar, which the byte-key form
+  # cannot carry)
+  def map_add_node(key_node, node)
+    rc = alive do
+      Yeptris::FFI.yeptris_node_map_add_node(@c_ptr, key_node.c_ptr, node.c_ptr)
+    end
+    Yeptris::FFI.check_status(rc, "yeptris_node_map_add_node")
+    self
+  end
+
   def map_set(key, node)
     key = key.to_s
     rc = alive { Yeptris::FFI.yeptris_node_map_set(@c_ptr, key, key.bytesize, node.c_ptr) }
