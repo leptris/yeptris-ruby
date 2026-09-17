@@ -9,6 +9,8 @@ require "yeptris/psych"
 RSpec.describe "Yeptris::Psych.domain_types" do
   after do
     Yeptris::Psych.domain_types.clear
+    Yeptris::Psych.load_tags.clear
+    Yeptris::Psych.dump_tags.clear
   end
 
   it "exists as a writable class-level registry" do
