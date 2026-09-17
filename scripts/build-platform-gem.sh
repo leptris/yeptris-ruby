@@ -84,10 +84,20 @@ else
   EXTRA="-Wl,-rpath,$RPATH"
 fi
 YEPTRIS_LIB_PATH="$LIB" YEPTRIS_SRC="$WORK/yeptris-c/src" \
-  YEPTRIS_RPATH="\${RPATH:-}" ruby extconf.rb
-make LIBRUBYARG_SHARED= LIBRUBYARG_STATIC= DLDFLAGS="$DLD $EXTRA"
+  YEPTRIS_RPATH="${RPATH:-}" ruby extconf.rb
+if [ "$IS_WINDOWS" = "1" ]; then
+  # PE has no lazy binding (#207/#227): the bundle LINKS its build
+  # Ruby's runtime DLL — the per-minor native-<minor>.so scheme
+  # carries the right one per user Ruby; this default binds the
+  # packaging Ruby's
+  make
+else
+  make LIBRUBYARG_SHARED= LIBRUBYARG_STATIC= DLDFLAGS="$DLD $EXTRA"
+fi
 otool -L native.bundle 2>/dev/null | grep -q libruby && { echo "ERROR: libruby still referenced"; exit 1; }
-ldd native.so 2>/dev/null | grep -q libruby && { echo "ERROR: libruby still referenced"; exit 1; } || true
+if [ "$IS_WINDOWS" != "1" ]; then
+  ldd native.so 2>/dev/null | grep -q libruby && { echo "ERROR: libruby still referenced"; exit 1; } || true
+fi
 echo "::endgroup::"
 
 if [ "$IS_WINDOWS" = "1" ]; then
