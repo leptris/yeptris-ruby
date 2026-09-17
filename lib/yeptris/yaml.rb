@@ -105,6 +105,12 @@ module Yeptris
 
       module_function
 
+      # Psych's exact timestamp spelling (format_time, #300): space
+      # separated, nanosecond width, Z for UTC — iso8601 diverged
+      def time_text(t)
+        t.utc? ? t.strftime("%Y-%m-%d %H:%M:%S.%9N Z") : t.strftime("%Y-%m-%d %H:%M:%S.%9N %:z")
+      end
+
       # Psych's float spelling (#290): Infinity/NAN ride the YAML words,
       # not Ruby's to_s (which prints "Infinity"/"NaN" — a STRING on
       # reload)
@@ -182,7 +188,8 @@ module Yeptris
         when Float then scalar(float_text(obj), STYLE_PLAIN, emit, blob, off)
         when true, false then scalar(obj.to_s, STYLE_PLAIN, emit, blob, off)
         when nil then scalar("", STYLE_PLAIN, emit, blob, off)
-        when Date, Time then scalar(obj.iso8601, STYLE_PLAIN, emit, blob, off)
+        when Time then scalar(time_text(obj), STYLE_PLAIN, emit, blob, off)
+        when Date then scalar(obj.iso8601, STYLE_PLAIN, emit, blob, off)
         else
           raise DumpError,
                 "cannot dump #{obj.class}: unsupported object " \
@@ -297,7 +304,8 @@ module Yeptris
         when Float then new_scalar(doc, BulkBuilder.float_text(obj))
         when true, false then new_scalar(doc, obj.to_s)
         when nil then new_scalar(doc, "")
-        when Date, Time then new_scalar(doc, obj.iso8601)
+        when Time then new_scalar(doc, BulkBuilder.time_text(obj))
+        when Date then new_scalar(doc, obj.iso8601)
         else
           raise DumpError,
                 "cannot dump #{obj.class}: unsupported object " \
