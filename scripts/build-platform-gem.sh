@@ -32,6 +32,9 @@ if [ "$IS_WINDOWS" = "1" ]; then
   # extconf's libdir glob looks for libyeptris.* — alias the MSVC
   # name beside it (mingw ld links the DLL directly)
   cp "$LIB" "$(dirname "$LIB")/libyeptris.dll"
+  # mkmf's Dir[] globs choke on the mixed separators Git-Bash hands
+  # over (D:\a/_temp/...) — normalize to pure forward slashes
+  LIB=$(cygpath -m "$LIB")
 else
   cmake -B "$WORK/yeptris-c/build" -S "$WORK/yeptris-c" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
