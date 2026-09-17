@@ -172,6 +172,7 @@ module Yeptris
                 scalar("", STYLE_SQ, emit, blob, off)
                 emit.call(BUILD_TAG, 0, off[0], 1)
                 blob << "!"
+                off[0] += 1
               elsif k.is_a?(Symbol)
                 scalar(":#{k}", STYLE_PLAIN, emit, blob, off)
               elsif k.is_a?(String)
