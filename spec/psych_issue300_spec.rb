@@ -22,6 +22,10 @@ RSpec.describe "Psych parity: timestamps and load_tags" do
     frac = Time.utc(2026, 1, 2, 3, 4, Rational(5_123_456_789, 1_000_000_000))
     expect(Yeptris::YAML.dump({ "frac" => frac }, header: true))
       .to include("frac: 2026-01-02 03:04:05.123456789 Z")
+    # the VISITOR surface too (Psych.dump of a Hash): the first cut
+    # only pinned the neutral one and the branch sat dead
+    expect(Yeptris::Psych.dump("t" => Time.utc(2026, 9, 7, 10, 0, 0)))
+      .to eq("---\nt: 2026-09-07 10:00:00.000000000 Z\n")
   end
 
   it "keeps Date as Psych's calendar form" do

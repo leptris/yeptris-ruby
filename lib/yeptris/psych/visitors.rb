@@ -120,14 +120,18 @@ module Yeptris
           # strings route through the builder's plain-safety helper
           # (one quoting rule, DRY); other scalars are their own text
           text =
-            if obj.is_a?(::Date) || obj.is_a?(::Time)
-              obj.iso8601 # canonical timestamp form, not to_s
+            if obj.is_a?(::Time)
+              # psych-5's format_time (#300 family 1) — the FIRST cut
+              # put this branch after the Date||Time iso8601 one, dead
+              # code: Psych.dump of a Hash still emitted iso8601 (the
+              # neutral surface alone was pinned)
+              ::Yeptris::YAML::BulkBuilder.time_text(obj)
+            elsif obj.is_a?(::Date)
+              obj.iso8601 # canonical calendar form (DateTime rides here too)
             elsif obj.nil?
               "" # libyaml's null rendering rides bare (issue #290)
             elsif obj.is_a?(::Float)
               ::Yeptris::YAML::BulkBuilder.float_text(obj)
-            elsif obj.is_a?(::Time)
-              ::Yeptris::YAML::BulkBuilder.time_text(obj)
             else
               obj.to_s
             end
