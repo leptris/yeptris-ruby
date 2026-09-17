@@ -37,6 +37,38 @@ module Yeptris
       def dump_tags=(tags)
         @dump_tags = tags
       end
+
+      # The third registry (stdlib psych carries all three; the rebind
+      # broke relaton/lutaml callers that wrote it — the 26x
+      # undefined-method report). Keys are normalized tag strings
+      # ("tag:DOMAIN:TYPE"), values are [key, block] post-processors.
+      def domain_types
+        @domain_types ||= {}
+      end
+
+      def domain_types=(types)
+        @domain_types = types
+      end
+
+      def add_domain_type(domain, type_tag, &block)
+        key = ["tag", domain, type_tag].join(":")
+        domain_types[key] = [key, block]
+        domain_types["tag:#{type_tag}"] = [key, block]
+      end
+
+      def add_builtin_type(type_tag, &block)
+        key = ["tag", "yaml.org,2002", type_tag].join(":")
+        domain_types[key] = [key, block]
+      end
+
+      def remove_type(type_tag)
+        domain_types.delete type_tag
+      end
+
+      def add_tag(tag, klass)
+        load_tags[tag] = klass.name
+        dump_tags[klass] = tag
+      end
     end
 
     # Children load via autoload declared HERE — the immediate parent
