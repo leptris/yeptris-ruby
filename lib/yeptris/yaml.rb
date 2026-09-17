@@ -102,6 +102,7 @@ module Yeptris
       STYLE_SQ = 2
       STYLE_DQ = 3
       STYLE_LIT = 4
+      BUILD_TAG = Yeptris::FFI::BUILD_TAG
 
       module_function
 
@@ -164,8 +165,14 @@ module Yeptris
               # reader resolves them back to Symbols; Integer/Float/
               # bool keys ride plain like their values (Psych emits
               # 1: unquoted — #290 family 5); string keys ride the
-              # visit_String rules like any other scalar
-              if k.is_a?(Symbol)
+              # visit_String rules like any other scalar; NIL keys
+              # ride Psych's explicit-`!` empty-scalar form
+              # (#300 family 2)
+              if k.nil?
+                scalar("", STYLE_SQ, emit, blob, off)
+                emit.call(BUILD_TAG, 0, off[0], 1)
+                blob << "!"
+              elsif k.is_a?(Symbol)
                 scalar(":#{k}", STYLE_PLAIN, emit, blob, off)
               elsif k.is_a?(String)
                 place(k, emit, blob, off, seen)
@@ -316,7 +323,15 @@ module Yeptris
       def build_map(doc, h, seen)
         cycle_guard(h, seen) do
           m = doc.new_mapping
-          h.each { |k, v| m.map_add(key_text(k), build(doc, v, seen)) }
+          h.each do |k, v|
+            if k.nil?
+              key_node = doc.new_scalar("", :single_quoted)
+              key_node.set_tag("!")
+              m.map_add_node(key_node, build(doc, v, seen))
+            else
+              m.map_add(key_text(k), build(doc, v, seen))
+            end
+          end
           m
         end
       end

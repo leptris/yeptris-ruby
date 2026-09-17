@@ -89,6 +89,8 @@ module Yeptris
                     %i[yeptris_document pointer size_t int], :yeptris_node
     attach_function :yeptris_node_map_add,
                     %i[yeptris_node pointer size_t yeptris_node], :int
+    attach_function :yeptris_node_map_add_node,
+                    %i[yeptris_node yeptris_node yeptris_node], :int
     attach_function :yeptris_node_map_set,
                     %i[yeptris_node pointer size_t yeptris_node], :int
     attach_function :yeptris_node_map_del, %i[yeptris_node pointer size_t], :int
@@ -176,6 +178,7 @@ module Yeptris
     BUILD_SEQ = 2
     BUILD_MAP = 3
     BUILD_END = 4
+    BUILD_TAG = 5
 
     # the ABI-pinned shape; the bulk builder packs these bytes
     # directly (12 per entry)
