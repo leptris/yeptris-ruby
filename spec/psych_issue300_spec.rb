@@ -86,4 +86,11 @@ RSpec.describe "Psych parity: timestamps and load_tags" do
       Yeptris::Psych.dump_tags.delete(point_klass)
     end
   end
+
+  it "family 2: nil mapping keys ride Psych's ! form" do
+    expect(Yeptris::YAML.dump({ nil => "nilkey" }, header: true))
+      .to eq("---\n! '': nilkey\n")
+    expect(Yeptris::Psych.dump(nil => "nilkey", "x" => 1))
+      .to eq("---\n! '': nilkey\nx: 1\n")
+  end
 end
