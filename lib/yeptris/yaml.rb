@@ -9,6 +9,8 @@ module Yeptris
   # the recorder-driven Visitors in phase B; this is the yeptris-native
   # face users target first).
   module YAML
+    autoload :Descriptor, "yeptris/yaml/descriptor"
+
     module_function
 
     # Loads the FIRST document of a YAML stream as native Ruby objects.

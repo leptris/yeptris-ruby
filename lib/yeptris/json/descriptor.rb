@@ -50,9 +50,18 @@ class Yeptris::JSON::Descriptor
   end
 
   # +kind+: :seq (rows are the root array) or :map (rows live under
-  # +path:+'s value). +children+: the leaf columns; each row is a
-  # mapping, every child names one typed column.
+  # +path:+'s value). +path+: a String, or an Array of Strings for a
+  # segmented (nested) path. +children+: the leaf columns; each row
+  # is a mapping, every child names one typed column.
   def self.build(kind:, path: nil, children:)
+    handle, names = compile_handle(kind, path, children)
+    new(handle, names)
+  end
+
+  # The compile half of .build (shared with the YAML subclass's
+  # build — ONE owner of the spec grammar). Returns the owned handle
+  # and the leaf names.
+  def self.compile_handle(kind, path, children)
     unless ROOT_KINDS.include?(kind)
       raise ArgumentError, "kind must be one of #{ROOT_KINDS.inspect}, got #{kind.inspect}"
     end
@@ -74,8 +83,20 @@ class Yeptris::JSON::Descriptor
       { "name" => name, "kind" => LEAF_SPEC_NAMES[code] }
     end
 
+    case path
+    when nil then nil
+    when ::String then spec_path = path
+    when ::Array
+      unless path.all? { |seg| seg.is_a?(::String) && !seg.empty? }
+        raise ArgumentError, "path segments must be non-empty Strings"
+      end
+      spec_path = path
+    else
+      raise ArgumentError, "path must be a String or an Array of Strings"
+    end
+
     spec = { "kind" => kind == :map ? "map" : "seq", "children" => leaves }
-    spec["path"] = path if path
+    spec["path"] = spec_path unless spec_path.nil?
 
     # the spec is strict JSON (the C compiler parses it through the
     # strict JSON DOM); compile once, the engine owns the copy
@@ -86,8 +107,9 @@ class Yeptris::JSON::Descriptor
       raise Error, "plan compile failed (status=#{st.read_int}): #{spec_json}"
     end
 
-    new(Handle.new(raw), leaves.map { |leaf| leaf["name"] })
+    [Handle.new(raw), leaves.map { |leaf| leaf["name"] }]
   end
+  private_class_method :compile_handle
 
   attr_reader :names # the planned leaf names, in spec order
 
@@ -172,6 +194,30 @@ class Yeptris::JSON::Descriptor
       end
     end
     private_class_method :read_column
+
+    # @api private — the DOM leg's read: typed lanes as above; str
+    # columns materialize from the (ptr,len) views into the document
+    def self.read_dom(raw, names)
+      rows = ::Yeptris::FFI.yeptris_plan_result_rows(raw)
+      columns = {}
+      names.each_with_index do |name, c|
+        kind = ::Yeptris::FFI.yeptris_plan_result_kind(raw, c)
+        if kind == 2
+          nulls = ::Yeptris::FFI.yeptris_plan_result_nulls(raw, c).read_bytes(rows).unpack("C*")
+          base = ::FFI::Pointer.new(::Yeptris::FFI.yeptris_plan_result_strs(raw, c))
+          stride = ::Yeptris::FFI::PlanStr.size
+          columns[name] = Array.new(rows) do |i|
+            next nil if nulls[i] == 1
+
+            v = ::Yeptris::FFI::PlanStr.new(base + i * stride)
+            v[:p].read_bytes(v[:len]).force_encoding(Encoding::UTF_8)
+          end
+        else
+          columns[name] = read_column(raw, c, kind, rows, nil)
+        end
+      end
+      new(rows, names, columns)
+    end
 
     def initialize(rows, names, columns)
       @rows = rows
