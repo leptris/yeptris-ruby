@@ -26,7 +26,8 @@ if [ "$IS_WINDOWS" = "1" ]; then
     -DYEPTRIS_BUILD_TESTING=OFF \
     -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
   cmake --build "$WORK/yeptris-c/build" --config Release
-  LIB="$WORK/yeptris-c/build/src/Release/yeptris.dll"
+  LIB="$WORK/yeptris-c/build/bin/Release/yeptris.dll"
+  [ -f "$LIB" ] || LIB="$WORK/yeptris-c/build/src/Release/yeptris.dll"
   [ -f "$LIB" ] || LIB="$WORK/yeptris-c/build/src/yeptris.dll"
   # extconf's libdir glob looks for libyeptris.* — alias the MSVC
   # name beside it (mingw ld links the DLL directly)
