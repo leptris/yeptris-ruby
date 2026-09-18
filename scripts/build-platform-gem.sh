@@ -157,6 +157,10 @@ if [ "$IS_WINDOWS" = "1" ]; then
   echo "::endgroup::"
 fi
 
+# platform gems vendor the prebuilt lib: they must NOT register the
+# source-build extension (toolchain-free installs)
+touch .yeptris-platform-gem
+
 echo "::group::Stage and build the platform gem"
 EXT=native.so
 [ -f "$EXT" ] || EXT=native.bundle
