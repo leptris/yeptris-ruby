@@ -1,5 +1,14 @@
+
 /* json_ruby.c — fused RFC 8259 → Ruby VALUE (TODO.restructure/22). */
 #include <ruby.h>
+/* rb_hash_new_capa is Ruby 3.2+; older Rubies grow dynamically (the
+ * FFI fallback stays correct on every minor either way). */
+#if RUBY_API_VERSION_MAJOR > 3 || (RUBY_API_VERSION_MAJOR == 3 && RUBY_API_VERSION_MINOR >= 2)
+#define HASH_NEW_CAPA(n) rb_hash_new_capa(n)
+#else
+#define HASH_NEW_CAPA(n) rb_hash_new()
+#endif
+
 #include <ruby/encoding.h>
 #include <ruby/intern.h>
 #include <stdlib.h>
@@ -310,13 +319,6 @@ void yep_rb_set_gc_mode(int mode) {
  * materialize cost. Returns seconds for n iterations. */
 #include <time.h>
 
-/* rb_hash_new_capa is Ruby 3.2+; older Rubies grow dynamically (the
- * FFI fallback stays correct on every minor either way). */
-#if RUBY_API_VERSION_MAJOR > 3 || (RUBY_API_VERSION_MAJOR == 3 && RUBY_API_VERSION_MINOR >= 2)
-#define HASH_NEW_CAPA(n) rb_hash_new_capa(n)
-#else
-#define HASH_NEW_CAPA(n) rb_hash_new()
-#endif
 
 double yep_rb_scan_time(const char* p, size_t len, int n) {
     static const YeptrisVisitVTable none = {0};
