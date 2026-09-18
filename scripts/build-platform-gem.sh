@@ -28,6 +28,9 @@ if [ "$IS_WINDOWS" = "1" ] && [ "$(ruby -e 'print Gem::Platform.local.to_s' 2>/d
   cmake --build "$WORK/yeptris-c/build"
   LIB="$WORK/yeptris-c/build/src/libyeptris.dll"
   [ -f "$LIB" ] || { echo "mingw build produced no libyeptris.dll" >&2; exit 1; }
+  # mkmf chokes on the mixed separators Git-Bash hands over
+  # (D:\a/_temp/...) — normalize, same as the MSVC branch
+  LIB=$(cygpath -m "$LIB")
 elif [ "$IS_WINDOWS" = "1" ]; then
   # Windows (the leptris-ruby legs): the MSVC generator drops the lib
   # prefix and stages in Release/; the gem vendors it AS
