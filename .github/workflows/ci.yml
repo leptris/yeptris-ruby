@@ -99,7 +99,7 @@ jobs:
             -DYEPTRIS_BUILD_TESTING=OFF \
             -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
           cmake --build libyeptris-src/build --config Release
-          DLL="$(ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null | head -1)"
+          DLL="$( (ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null || true) | head -1)"
           test -n "$DLL"
           cp "$DLL" "$(dirname "$DLL")/libyeptris.dll"
           echo "YEPTRIS_LIB=$(dirname "$DLL")/libyeptris.dll" >> "$GITHUB_ENV"
@@ -246,7 +246,7 @@ jobs:
             -DYEPTRIS_BUILD_TESTING=OFF \
             -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
           cmake --build libyeptris-src/build --config Release
-          DLL="$(ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null | head -1)"
+          DLL="$( (ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null || true) | head -1)"
           test -n "$DLL"
           cp "$DLL" "$(dirname "$DLL")/libyeptris.dll"
           echo "YEPTRIS_LIB=$(dirname "$DLL")/libyeptris.dll" >> "$GITHUB_ENV"
