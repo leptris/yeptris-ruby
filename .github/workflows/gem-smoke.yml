@@ -56,4 +56,15 @@ jobs:
           else
             gem install yeptris $PLAT
           fi
+          # Ruby 3.0's RubyGems (3.2) can mis-resolve --platform and
+          # pull the musl gem onto a glibc host; verify and correct
+          # via the explicit gem file (newer RubyGems legs are exact)
+          if gem list -d yeptris 2>/dev/null | grep -q "x86_64-linux-musl" && [ "$(uname -s)" = "Linux" ] && ! ldd --version 2>&1 | grep -qi musl; then
+            echo "old RubyGems pulled the musl gem on glibc — reinstalling the exact platform"
+            gem uninstall yeptris --all --executables --force >/dev/null 2>&1 || true
+            V2="${V:-$(curl -s https://rubygems.org/api/v1/versions/yeptris/latest.json | sed 's/.*"version":"\([^"]*\)".*/\1/')}"
+            [ -n "$V2" ] || { echo "cannot resolve the latest version to reinstall"; exit 1; }
+            curl -fsSL "https://rubygems.org/downloads/yeptris-$V2-x86_64-linux.gem" -o /tmp/yeptris-plat.gem
+            gem install /tmp/yeptris-plat.gem
+          fi
           ruby scripts/gem_smoke.rb
