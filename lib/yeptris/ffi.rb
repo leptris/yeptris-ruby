@@ -231,9 +231,17 @@ module Yeptris
     end
 
     # Owned char* results (serialize*): one reader, freed exactly once.
-    # The buffers are plain malloc'd C memory (the header contract says
-    # "caller frees"), so the release is libc free.
-    attach_function :c_free, :free, [:pointer], :void
+    # The release goes through yeptris_free (libyeptris's own
+    # allocator-matching free) because ffi's :free attach has no
+    # Windows process-symbol fallback — libyeptris.dll doesn't export
+    # libc free, so resolving :free against it fails on Windows.
+    begin
+      attach_function :yeptris_free, [:pointer], :void
+    rescue ::FFI::NotFoundError
+      # libyeptris < v0.6.6: POSIX resolves :free through the process
+      # symbol table, so the direct libc attach still works there.
+      attach_function :yeptris_free, :free, [:pointer], :void
+    end
 
     module Owned
       module_function
@@ -250,7 +258,7 @@ module Yeptris
             else
               ptr.read_string.force_encoding(Encoding::UTF_8)
             end
-        ::Yeptris::FFI.c_free(ptr)
+        ::Yeptris::FFI.yeptris_free(ptr)
         s
       end
     end
