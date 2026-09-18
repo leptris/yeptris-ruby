@@ -16,3 +16,4 @@ ext/yeptris_native/*.so
 ext/yeptris_native/*.dll
 lib/yeptris/native.bundle
 lib/yeptris/native.so
+vendor/
