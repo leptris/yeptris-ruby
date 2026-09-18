@@ -43,6 +43,10 @@ jobs:
             ruby: "3.3"
           - os: ubuntu-latest
             ruby: "4.0"
+          # Linux covers BOTH arches (ubuntu-latest = amd64; the arm
+          # cell rides ubuntu-24.04-arm)
+          - os: ubuntu-24.04-arm
+            ruby: "3.4"
           - os: ubuntu-latest
             ruby: "3.1"
           - os: ubuntu-latest
