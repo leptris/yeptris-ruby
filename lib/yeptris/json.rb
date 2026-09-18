@@ -71,7 +71,7 @@ module Yeptris
       return s unless s.include?("\\")
 
       b = s.b
-      out = +"".b
+      out = String.new(encoding: Encoding::BINARY)
       i = 0
       n = b.bytesize
       while i < n
@@ -154,7 +154,10 @@ module Yeptris
           stack.pop
           key_sets&.pop
         when T_STR
-          text = lens[i] == 0 ? +"".force_encoding(Encoding::UTF_8) : decode_span(src, offs[i], lens[i])
+          # empty-string literals are frozen+shared since Ruby 3.4
+          # (and `+""` binds after the method chain anyway), so the
+          # fresh copy must come from the encoding call itself
+          text = lens[i] == 0 ? String.new(encoding: Encoding::UTF_8) : decode_span(src, offs[i], lens[i])
           if pending_key.nil? && !stack.empty? && stack.last.is_a?(Hash)
             if key_sets && key_sets.last.key?(text)
               raise ParseError, %(duplicate key "#{text}" in JSON object)
