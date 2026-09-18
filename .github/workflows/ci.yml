@@ -102,7 +102,9 @@ jobs:
           DLL="$( (ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null || true) | head -1)"
           test -n "$DLL"
           cp "$DLL" "$(dirname "$DLL")/libyeptris.dll"
-          echo "YEPTRIS_LIB=$(dirname "$DLL")/libyeptris.dll" >> "$GITHUB_ENV"
+          # the ffi ladder's repo-root candidate (../../libyeptris.dll
+          # from lib/yeptris/) — bulletproof against env plumbing
+          cp "$DLL" "$GITHUB_WORKSPACE/libyeptris.dll"
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
@@ -250,7 +252,9 @@ jobs:
           DLL="$( (ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null || true) | head -1)"
           test -n "$DLL"
           cp "$DLL" "$(dirname "$DLL")/libyeptris.dll"
-          echo "YEPTRIS_LIB=$(dirname "$DLL")/libyeptris.dll" >> "$GITHUB_ENV"
+          # the ffi ladder's repo-root candidate (../../libyeptris.dll
+          # from lib/yeptris/) — bulletproof against env plumbing
+          cp "$DLL" "$GITHUB_WORKSPACE/libyeptris.dll"
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
