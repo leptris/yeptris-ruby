@@ -138,11 +138,23 @@ else
   cp "$LIB" "$(basename "$LIB")"
 fi
 cp "ext/yeptris_native/$EXT" "lib/yeptris/$EXT"
-PLATFORM="$(ruby -e 'print Gem::Platform.local.to_s')"
+# macOS: publish VERSIONLESS (arm64-darwin, no kernel suffix) — the
+# -23 form only matched the build runner's exact darwin, so Tahoe
+# (darwin-25) and friends fell to the DLL-less pure-ruby gem
+# (yeptris-ruby#125). The ABI floor is pinned by the build's
+# MACOS_DEPLOYMENT_TARGET, not the platform tag.
+PLATFORM="$(ruby -e '
+  p = Gem::Platform.local
+  p.version = nil if p.os == "darwin"
+  print p.to_s
+')"
 GEMFILE="$(ruby -e '
   require "rubygems/package"
   spec = Gem::Specification.load("yeptris.gemspec")
   spec.platform = Gem::Platform.local
+  if spec.platform.os == "darwin"
+    spec.platform = Gem::Platform.new([spec.platform.cpu, "darwin"])
+  end
   (Dir["lib/**/*.{so,dylib,bundle}"] + Dir["*.{so,dylib,dll}"]).each { |f| spec.files << f unless spec.files.include?(f) }
   print Gem::Package.build(spec)
 ' 2>/dev/null | grep -oE "[A-Za-z0-9._-]+\.gem" | tail -1)"
