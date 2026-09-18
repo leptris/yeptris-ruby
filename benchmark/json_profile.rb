@@ -85,22 +85,16 @@ modes.each do |mode|
               "", "", j_min * 1e3, j_med * 1e3, j_mean * 1e3, p10, p50, p90)
   gate = ENV["GATE"].to_s
   unless gate.empty?
-    # Two statistic, two roles (2026-09-18 evidence): the MEDIAN with
-    # a 12.5% margin catches systematic regressions (1.35 = gate *
-    # 1.125); the MIN is the noise floor — observed stable at
-    # 1.15-1.21 across the ubuntu pool while the median wanders
-    # 1.16-1.21, so a 1%-margin median gate coin-flipped on
-    # content-free PRs. The min catches a floor shift (toolchain,
-    # allocator) with none of the pool noise.
-    med_limit = gate.to_f * 1.125
-    min_limit = gate.to_f * 1.0833
+    # The MEDIAN with an ABSOLUTE +0.15 margin (2026-09-18 evidence):
+    # a 1%-margin gate sat on the ubuntu pool's population median and
+    # coin-flipped on content-free PRs, and the min-ratio statistic
+    # compares each side's luckiest iteration — it flips wholesale
+    # when a runner image changes (macos-latest -> macOS 26: json's
+    # floor dips, yeptris's does not, min-ratio 1.145 vs median 0.865).
+    # A true 15%+ regression trips on any pool.
+    med_limit = gate.to_f + 0.15
     if (y_med / j_med) >= med_limit
       warn(format("GATE FAILED: median ratio %.3fx >= %s", y_med / j_med, med_limit))
-      exit 1
-    end
-    if (y_min / j_min) >= min_limit
-      warn(format("GATE FAILED: min ratio %.3fx >= %s (noise floor shifted)", y_min / j_min,
-                  min_limit))
       exit 1
     end
   end
