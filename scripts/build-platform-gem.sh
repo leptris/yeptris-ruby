@@ -169,7 +169,15 @@ if [ "$IS_WINDOWS" = "1" ]; then
 else
   cp "$LIB" "$(basename "$LIB")"
 fi
-cp "ext/yeptris_native/$EXT" "lib/yeptris/$EXT"
+if [ "$IS_WINDOWS" = "1" ]; then
+  cp "ext/yeptris_native/$EXT" "lib/yeptris/$EXT"
+else
+  # POSIX stages per-minor: the loader must never run an ext built
+  # for a different Ruby minor (3.0 loading the 3.3 build = the
+  # JSON ParseError). Dev checkouts keep the plain native.so name.
+  MINOR="$(ruby -e 'print RUBY_VERSION[/\A\d+\.\d+/]')"
+  cp "ext/yeptris_native/$EXT" "lib/yeptris/native-$MINOR.so"
+fi
 # macOS: publish VERSIONLESS (arm64-darwin, no kernel suffix) — the
 # -23 form only matched the build runner's exact darwin, so Tahoe
 # (darwin-25) and friends fell to the DLL-less pure-ruby gem
