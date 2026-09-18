@@ -95,16 +95,18 @@ end
 # DLL per supported minor ships and RUBY_VERSION selects. A missing
 # cell (Ruby 3.3 arm64 has no build) falls back LOUDLY to the ladder.
 begin
-  if Gem.win_platform?
-    require "yeptris/native-#{RUBY_VERSION[/\A\d+\.\d+/]}"
-  else
+  # per-minor FIRST everywhere: a single version-agnostic native.so
+  # loads under ANY Ruby (symbols resolve from the host process), and
+  # one built for a different minor is an ABI gamble — Ruby 3.0 ran
+  # a 3.3-built ext and the JSON parse failed. The plain name stays
+  # as the dev-checkout fallback (built for the running Ruby).
+  require "yeptris/native-#{RUBY_VERSION[/\A\d+\.\d+/]}"
+rescue LoadError
+  begin
     require "yeptris/native"
-  end
-rescue LoadError => e
-  if Gem.win_platform?
+  rescue LoadError => e
     warn "yeptris: no precompiled native materializer for Ruby " \
          "#{RUBY_VERSION[/\A\d+\.\d+/]} on this platform " \
          "(#{e.message}); the FFI ladder carries the load"
   end
-  # FFI ladder only
 end
