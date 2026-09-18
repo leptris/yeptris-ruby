@@ -151,7 +151,7 @@ static int yep_ins_mode = YEP_INS_BULK;
 static VALUE jr_object(jr* j) {
     j->i++; j->depth++;
     if (yep_shape_mode == YEP_SHAPE_PRE) {
-        VALUE h = rb_hash_new_capa(8);
+        VALUE h = HASH_NEW_CAPA(8);
         jr_ws(j);
         if (j->i < j->len && j->p[j->i] == '}') { j->i++; j->depth--; return h; }
         return jr_object_body(j, h);
@@ -178,7 +178,7 @@ static VALUE jr_object_body(jr* j, VALUE h_pre) {
         VALUE val = jr_value(j);
         if (j->err) goto out;
         if (yep_ins_mode == YEP_INS_ASET || j->strict_dup) {
-            VALUE h = h_pre == Qundef ? (h_pre = rb_hash_new_capa(8)) : h_pre;
+            VALUE h = h_pre == Qundef ? (h_pre = HASH_NEW_CAPA(8)) : h_pre;
             if (j->strict_dup && !NIL_P(rb_hash_aref(h, key))) {
                 j->err = -3;
                 j->dup_key = key;
@@ -204,13 +204,13 @@ static VALUE jr_object_body(jr* j, VALUE h_pre) {
         j->err = -2; goto out;
     }
     if (yep_ins_mode == YEP_INS_BULK) {
-        VALUE h = (h_pre == Qundef) ? rb_hash_new_capa((long)(pn / 2)) : h_pre;
+        VALUE h = (h_pre == Qundef) ? HASH_NEW_CAPA((long)(pn / 2)) : h_pre;
         rb_hash_bulk_insert((long)pn, (const VALUE*)pv, h);
         if (pv != pairs) { free(pv); }
         j->depth--;
         return h;
     }
-    if (h_pre == Qundef) { h_pre = rb_hash_new_capa(8); }
+    if (h_pre == Qundef) { h_pre = HASH_NEW_CAPA(8); }
 out:
     if (pv != pairs) { free(pv); (void)heap_cap; }
     if (j->err) return Qnil;
@@ -309,6 +309,15 @@ void yep_rb_set_gc_mode(int mode) {
  * same scan kernels through the null vtable. Decomposes scan vs
  * materialize cost. Returns seconds for n iterations. */
 #include <time.h>
+
+/* rb_hash_new_capa is Ruby 3.2+; older Rubies grow dynamically (the
+ * FFI fallback stays correct on every minor either way). */
+#if RUBY_API_VERSION_MAJOR > 3 || (RUBY_API_VERSION_MAJOR == 3 && RUBY_API_VERSION_MINOR >= 2)
+#define HASH_NEW_CAPA(n) rb_hash_new_capa(n)
+#else
+#define HASH_NEW_CAPA(n) rb_hash_new()
+#endif
+
 double yep_rb_scan_time(const char* p, size_t len, int n) {
     static const YeptrisVisitVTable none = {0};
     struct timespec t0, t1;
