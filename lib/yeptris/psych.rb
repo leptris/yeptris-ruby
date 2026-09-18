@@ -178,32 +178,32 @@ module Yeptris
 
       # stdlib's file-level faces (#135): BOM-tolerant UTF-8 reads with
       # the fallback contract (load_file path, fallback: false default).
-      def load_file(path, fallback: false, **)
-        File.open(path, "r:bom|utf-8") { |f| load(f, **) }
+      def load_file(path, fallback: false, **kwargs)
+        File.open(path, "r:bom|utf-8") { |f| load(f, **kwargs) }
       rescue Errno::ENOENT
         raise unless fallback
 
         false
       end
 
-      def safe_load_file(path, fallback: false, **)
-        File.open(path, "r:bom|utf-8") { |f| safe_load(f, **) }
+      def safe_load_file(path, fallback: false, **kwargs)
+        File.open(path, "r:bom|utf-8") { |f| safe_load(f, **kwargs) }
       rescue Errno::ENOENT
         raise unless fallback
 
         false
       end
 
-      def unsafe_load_file(path, fallback: false, **)
-        File.open(path, "r:bom|utf-8") { |f| unsafe_load(f, **) }
+      def unsafe_load_file(path, fallback: false, **kwargs)
+        File.open(path, "r:bom|utf-8") { |f| unsafe_load(f, **kwargs) }
       rescue Errno::ENOENT
         raise unless fallback
 
         false
       end
 
-      def parse_file(path, **)
-        File.open(path, "r:bom|utf-8") { |f| parse(f, **) }
+      def parse_file(path, **kwargs)
+        File.open(path, "r:bom|utf-8") { |f| parse(f, **kwargs) }
       end
 
 
@@ -214,7 +214,7 @@ module Yeptris
         ::Yeptris::Psych.dump(obj, io, options)
       end
 
-      def load_stream(yaml, **)
+      def load_stream(yaml, **kwargs)
         # materialize each document's root directly — the stream
         # children share one C document, so their handles would all
         # resolve to the first document's tree
