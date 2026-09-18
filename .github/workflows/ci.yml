@@ -119,6 +119,7 @@ jobs:
           cmake --build libyeptris-src/build
 
       - name: Build the native materializer
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           if [ "$(uname -s)" = "Darwin" ]; then
