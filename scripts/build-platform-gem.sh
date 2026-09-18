@@ -36,9 +36,28 @@ if [ "$IS_WINDOWS" = "1" ]; then
   # over (D:\a/_temp/...) — normalize to pure forward slashes
   LIB=$(cygpath -m "$LIB")
 else
-  cmake -B "$WORK/yeptris-c/build" -S "$WORK/yeptris-c" -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
-    -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+  if [ "$(uname -s)" = "Darwin" ]; then
+    # Versionless darwin platforms (#125): the gem push stamps a
+    # kernel suffix (arm64-darwin-23) from the binaries' minos when
+    # it sits in the mapped 11-15 window — and a suffixed platform
+    # matches ONLY that exact kernel (Tahoe darwin-25 fell back to
+    # the DLL-less pure-ruby gem). minos 26.0 is outside the window,
+    # so the gem registers versionless and matches every macOS; the
+    # minos field does not gate dlopen (verified: a minos-26 dylib
+    # loads and binds on darwin-23 — the same recipe leptris-ruby
+    # 1.9.193.3 ships). The REAL floor is the lib's symbol use
+    # (libSystem basics, macOS 11-era). Revisit if RubyGems widens
+    # the mapping table.
+    export MACOSX_DEPLOYMENT_TARGET=26.0
+    cmake -B "$WORK/yeptris-c/build" -S "$WORK/yeptris-c" -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
+      -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON \
+      -DCMAKE_OSX_DEPLOYMENT_TARGET=26.0
+  else
+    cmake -B "$WORK/yeptris-c/build" -S "$WORK/yeptris-c" -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
+      -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+  fi
   cmake --build "$WORK/yeptris-c/build"
   LIB="$WORK/yeptris-c/build/src/libyeptris.so"
   [ -f "$LIB" ] || LIB="$WORK/yeptris-c/build/src/libyeptris.dylib"
