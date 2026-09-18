@@ -1,0 +1,59 @@
+name: published-gem smoke
+
+# Installs the PUBLISHED gem from rubygems (not the checkout) on every
+# released platform/Ruby combination and round-trips load + the psych
+# drop-in + JSON. Guards the packaging (per-minor natives, vendored
+# DLLs, the darwin stamp) against regressions on the artifact users
+# actually install — the guard #318 needed (the teptris-ruby template).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "gem version (default: latest)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  install-smoke:
+    name: ${{ matrix.os }}${{ matrix.ruby && format(' ruby {0}', matrix.ruby) || '' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04-arm }
+          - { os: ubuntu-latest,      ruby: "3.0" }
+          - { os: ubuntu-latest,      ruby: "3.4" }
+          - { os: macos-15 }
+          - { os: macos-15-intel }
+          - { os: macos-26 }
+          - { os: windows-latest,     platform: x64-mingw-ucrt,     ruby: "3.1" }
+          - { os: windows-latest,     platform: x64-mingw-ucrt,     ruby: "3.2" }
+          - { os: windows-latest,     platform: x64-mingw-ucrt,     ruby: "3.3" }
+          - { os: windows-latest,     platform: x64-mingw-ucrt,     ruby: "3.4" }
+          - { os: windows-latest,     platform: x64-mingw-ucrt,     ruby: "4.0" }
+          - { os: windows-latest,     platform: x64-mingw32,        ruby: "3.0" }
+          - { os: windows-11-arm,     platform: aarch64-mingw-ucrt, ruby: "3.4" }
+          - { os: windows-11-arm,     platform: aarch64-mingw-ucrt, ruby: "4.0" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby || '3.4' }}
+
+      - name: Install the published gem and round-trip
+        shell: bash
+        run: |
+          V="${{ inputs.version }}"
+          PLAT="${{ matrix.platform && format('--platform {0}', matrix.platform) || '' }}"
+          if [ -n "$V" ]; then
+            gem install yeptris --version "$V" $PLAT
+          else
+            gem install yeptris $PLAT
+          fi
+          ruby scripts/gem_smoke.rb
