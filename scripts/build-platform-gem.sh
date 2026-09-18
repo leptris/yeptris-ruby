@@ -18,7 +18,17 @@ fi
 
 echo "::group::Build libyeptris v$V"
 git clone --quiet --depth 1 --branch "v$V" https://github.com/leptris/yeptris "$WORK/yeptris-c"
-if [ "$IS_WINDOWS" = "1" ]; then
+if [ "$IS_WINDOWS" = "1" ] && [ "$(ruby -e 'print Gem::Platform.local.to_s' 2>/dev/null)" = "x64-mingw32" ]; then
+  # Ruby <= 3.0 (x64-mingw32, the msvcrt ABI): the RubyInstaller
+  # mingw-w64 toolchain — gcc via Ninja; gcc keeps the lib prefix and
+  # stages under src/ directly, so the MSVC name dances do not apply
+  cmake -B "$WORK/yeptris-c/build" -S "$WORK/yeptris-c" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
+    -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+  cmake --build "$WORK/yeptris-c/build"
+  LIB="$WORK/yeptris-c/build/src/libyeptris.dll"
+  [ -f "$LIB" ] || { echo "mingw build produced no libyeptris.dll" >&2; exit 1; }
+elif [ "$IS_WINDOWS" = "1" ]; then
   # Windows (the leptris-ruby legs): the MSVC generator drops the lib
   # prefix and stages in Release/; the gem vendors it AS
   # libyeptris.dll — the ffi ladder's name.
