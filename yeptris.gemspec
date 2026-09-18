@@ -24,13 +24,15 @@ Gem::Specification.new do |spec|
   spec.homepage = "https://github.com/leptris/yeptris"
   spec.license = "MIT"
 
-  # The FFI core is pure Ruby — installs never compile. The optional
-  # native materializer (TODO.restructure/22) ships as SOURCE in ext/
-  # for opt-in builds (see README: "Native materializer"); the gem
-  # loads it only when a compiled native.so/.bundle is present and
-  # silently falls back to the FFI Marshal ladder otherwise.
+  # libyeptris rides EVERY artifact: platform gems vendor the prebuilt
+  # shared lib at the gem root, and the pure `ruby`-platform gem
+  # carries the C sources under vendor/ + an extension that builds
+  # them at install time (no-op when a prebuilt lib is present).
   spec.files = Dir["lib/**/*.rb"] + Dir["lib/**/*.{so,dylib,dll,bundle}"] +
-               Dir["*.{so,dylib}"] + Dir["ext/**/*.{c,h,rb}"] + %w[README.adoc]
+               Dir["*.{so,dylib}"] + Dir["ext/**/*.{c,h,rb}"] +
+               Dir["vendor/libyeptris/**/*"].select { |f| File.file?(f) } +
+               %w[README.adoc]
+  spec.extensions = ["ext/libyeptris/extconf.rb"]
   spec.require_paths = ["lib"]
 
   spec.required_ruby_version = ">= 3.0"
