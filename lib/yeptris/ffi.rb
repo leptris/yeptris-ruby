@@ -28,6 +28,18 @@ module Yeptris
       MSG
     end
 
+    # :c_free (:free, line ~240) must resolve against the C runtime.
+    # Linux/macOS fall through to the process symbol table, but
+    # Windows has no such fallback — without LIBC attached the
+    # ffi.rb load DIED at that attach (leaving every later constant
+    # undefined: the mingw gem's missing NODE_* / #318).
+    begin
+      ffi_lib FFI::Library::LIBC
+    rescue StandardError
+      # no LIBC handle: the c_free attach below surfaces the failure
+      # exactly where it used to, on non-Windows platforms only
+    end
+
     typedef :pointer, :yeptris_document
     typedef :pointer, :yeptris_node
     typedef :pointer, :yeptris_status_out
