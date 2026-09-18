@@ -4,6 +4,11 @@ require "date"
 require "time"
 require "set"
 
+# Self-sufficient (the #95 yaml.rb fix, same class): the standalone
+# require "yeptris/psych" must register the Document/FFI machinery —
+# consumers load this face directly under the drop-in.
+require "yeptris"
+
 # The Psych drop-in namespace (TODO.impl/15 phase C).
 #
 # `require "yeptris/psych"` loads this namespace WITHOUT touching the
@@ -130,7 +135,7 @@ module Yeptris
       # Psych 5: load is safe — plain data structures only. Tagged
       # nodes raise DisallowedClass unless their class is permitted
       # (Date/Time/Symbol are built in; they are plain data here).
-      def load(yaml, permitted_classes: [], aliases: false, **)
+      def load(yaml, permitted_classes: [::Date, ::Time], aliases: false, **)
         safe_load(yaml, permitted_classes: permitted_classes, aliases: aliases)
       end
 
@@ -144,10 +149,78 @@ module Yeptris
         Visitors::ToRuby.visit(tree.children.first)
       end
 
-      def safe_load(yaml, permitted_classes: [], aliases: false, **)
+      def safe_load(yaml, permitted_classes: [::Date, ::Time], aliases: false, **)
         doc = Yeptris::Document.parse(yaml, schema: :compat_11)
         begin
-          walk_safe(doc.root(0), permitted_classes, aliases)
+          force_utf8_scalars(walk_safe(doc.root(0), permitted_classes, aliases))
+        ensure
+          doc.free
+        end
+      end
+
+      # A YAML stream is a Unicode character stream: stdlib psych tags
+      # non-ASCII scalars UTF-8 even when the input String is BINARY
+      # (#135). ASCII-only values keep their (binary) encoding — a
+      # re-tag would be observable there and stdlib does not either.
+      def force_utf8_scalars(obj)
+        case obj
+        when ::String
+          obj.force_encoding(::Encoding::UTF_8) if obj.encoding == ::Encoding::ASCII_8BIT && !obj.ascii_only?
+          obj
+        when ::Hash
+          obj.each { |k, v| force_utf8_scalars(k); force_utf8_scalars(v) }
+        when ::Array
+          obj.each { |v| force_utf8_scalars(v) }
+        else
+          obj
+        end
+      end
+
+      # stdlib's file-level faces (#135): BOM-tolerant UTF-8 reads with
+      # the fallback contract (load_file path, fallback: false default).
+      def load_file(path, fallback: false, **)
+        File.open(path, "r:bom|utf-8") { |f| load(f, **) }
+      rescue Errno::ENOENT
+        raise unless fallback
+
+        false
+      end
+
+      def safe_load_file(path, fallback: false, **)
+        File.open(path, "r:bom|utf-8") { |f| safe_load(f, **) }
+      rescue Errno::ENOENT
+        raise unless fallback
+
+        false
+      end
+
+      def unsafe_load_file(path, fallback: false, **)
+        File.open(path, "r:bom|utf-8") { |f| unsafe_load(f, **) }
+      rescue Errno::ENOENT
+        raise unless fallback
+
+        false
+      end
+
+      def parse_file(path, **)
+        File.open(path, "r:bom|utf-8") { |f| parse(f, **) }
+      end
+
+
+
+      # stdlib's deprecated safe/dump split — same output here (every
+      # value this loader produces is safe data)
+      def safe_dump(obj, io = nil, options = {})
+        ::Yeptris::Psych.dump(obj, io, options)
+      end
+
+      def load_stream(yaml, **)
+        # materialize each document's root directly — the stream
+        # children share one C document, so their handles would all
+        # resolve to the first document's tree
+        doc = Yeptris::Document.parse(yaml, schema: :compat_11)
+        begin
+          (0...doc.document_count).map { |i| doc.root(i).to_ruby }
         ensure
           doc.free
         end
