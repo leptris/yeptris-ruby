@@ -27,11 +27,22 @@ jobs:
             ruby: "3.0"
           # Windows spec legs (#318's lesson: the Ruby suite never ran
           # on Windows, so the mingw gem's load failure shipped for
-          # three releases) — every PR proves the Windows load path
+          # three releases) — every PR proves the Windows load path.
+          # macOS covers BOTH arches (macos-latest = arm64; the intel
+          # cell rides macos-15-intel). The 3.3/3.4/4.0 series runs
+          # on every OS.
           - os: windows-latest
             ruby: "3.3"
           - os: windows-latest
             ruby: "3.4"
+          - os: windows-latest
+            ruby: "4.0"
+          - os: macos-15-intel
+            ruby: "3.4"
+          - os: ubuntu-latest
+            ruby: "3.3"
+          - os: ubuntu-latest
+            ruby: "4.0"
           - os: ubuntu-latest
             ruby: "3.1"
           - os: ubuntu-latest
