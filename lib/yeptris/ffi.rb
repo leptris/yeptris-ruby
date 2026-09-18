@@ -28,19 +28,6 @@ module Yeptris
       MSG
     end
 
-    # :c_free (:free, line ~250) must resolve against the C runtime.
-    # Linux/macOS fall through to the process symbol table, but
-    # Windows has no such fallback — without a CRT handle attached
-    # the ffi.rb load DIED at that attach (leaving every later
-    # constant undefined: the mingw gem's missing NODE_* / #318).
-    # An FFI::Library::LIBC reference raised NameError here and the
-    # rescue swallowed it — the 0.6.5.4 trap. Name the DLLs directly:
-    # ucrtbase for Ruby >= 3.1, msvcrt for the 3.0 msvcrt ABI.
-    begin
-      ffi_lib "ucrtbase.dll", "msvcrt.dll"
-    rescue LoadError
-      # non-Windows: :free resolves through the process fallback
-    end
 
     typedef :pointer, :yeptris_document
     typedef :pointer, :yeptris_node
