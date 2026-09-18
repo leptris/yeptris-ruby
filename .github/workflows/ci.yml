@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  # cancel superseded runs of the same PR/branch
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   spec:
     name: Spec on ${{ matrix.os }}${{ matrix.c_main && ' (C main)' || '' }}
@@ -46,6 +51,9 @@ jobs:
           # Linux covers BOTH arches (ubuntu-latest = amd64; the arm
           # cell rides ubuntu-24.04-arm)
           - os: ubuntu-24.04-arm
+            ruby: "3.4"
+          # Windows ARM64 (the aarch64-mingw-ucrt gem's home runner)
+          - os: windows-11-arm
             ruby: "3.4"
           - os: ubuntu-latest
             ruby: "3.1"
