@@ -130,9 +130,9 @@ jobs:
           fi
           export YEPTRIS_SRC="$GITHUB_WORKSPACE/libyeptris-src/src"
           cd ext/yeptris_native
-          ruby extconf.rb
-          make
-          cp native.bundle ../../lib/yeptris/ 2>/dev/null || cp native.so ../../lib/yeptris/
+          ruby extconf.rb && make && \
+            { cp native.bundle ../../lib/yeptris/ 2>/dev/null || cp native.so ../../lib/yeptris/; } || \
+            echo "::warning::the optional native materializer did not build — the FFI ladder carries the load"
 
       - name: Run binding specs
         shell: bash
@@ -270,9 +270,9 @@ jobs:
           fi
           export YEPTRIS_SRC="$GITHUB_WORKSPACE/libyeptris-src/src"
           cd ext/yeptris_native
-          ruby extconf.rb
-          make
-          cp native.bundle ../../lib/yeptris/ 2>/dev/null || cp native.so ../../lib/yeptris/
+          ruby extconf.rb && make && \
+            { cp native.bundle ../../lib/yeptris/ 2>/dev/null || cp native.so ../../lib/yeptris/; } || \
+            echo "::warning::the optional native materializer did not build — the FFI ladder carries the load"
 
       - name: Run the profile
         run: |
