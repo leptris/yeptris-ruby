@@ -44,13 +44,14 @@ module Yeptris
   autoload :ValueML, "yeptris/valueml"
   autoload :Psych, "yeptris/psych"
   autoload :Schema, "yeptris/schema"
-
-  # The safe_load error names, aliased at the top level so consumers
-  # writing rescues need no nesting knowledge (issue #73's naming
-  # note): Yeptris::DisallowedClass is Yeptris::Psych::DisallowedClass.
-  DisallowedClass = Psych::DisallowedClass
-  AliasesError = Psych::AliasesError
 end
+
+# NOTE (the #318 poisoned-process class): the Psych error-name aliases
+# live BELOW the ffi require — reading Psych here would trigger the
+# psych autoload BEFORE the native library resolves, and a mid-load
+# ffi failure under a drop-in rebind left ::Psych rebound against a
+# half-initialized FFI module (every to_yaml in the process died).
+# With this order an ffi failure is a clean, loud require failure.
 
 # Eager native-library resolution (leptris-ruby lesson): fail at
 # require time, not at first parse. The ffi require MUST come after
@@ -65,6 +66,25 @@ rescue LoadError => e
     platform gem that vendors it.
     (Underlying error: #{e.message})
   MSG
+end
+
+
+# The safe_load error names, aliased at the top level so consumers
+# writing rescues need no nesting knowledge (issue #73's naming
+# note): Yeptris::DisallowedClass is Yeptris::Psych::DisallowedClass.
+# LAZY (const_missing): a standalone require "yeptris/psych" loads
+# yeptris.rb MID-psych — an eager alias here would re-enter the
+# half-loaded psych.rb through the autoload and NameError. At first
+# touch psych is complete in every load order.
+module Yeptris
+  def self.const_missing(name)
+    case name
+    when :DisallowedClass, :AliasesError
+      const_set(name, Psych.const_get(name))
+    else
+      super
+    end
+  end
 end
 
 # Optional C-API materializer (TODO.restructure/22): fused visit →
