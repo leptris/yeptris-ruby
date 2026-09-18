@@ -25,6 +25,13 @@ jobs:
           # in-between minors the platform gems serve
           - os: ubuntu-latest
             ruby: "3.0"
+          # Windows spec legs (#318's lesson: the Ruby suite never ran
+          # on Windows, so the mingw gem's load failure shipped for
+          # three releases) — every PR proves the Windows load path
+          - os: windows-latest
+            ruby: "3.3"
+          - os: windows-latest
+            ruby: "3.4"
           - os: ubuntu-latest
             ruby: "3.1"
           - os: ubuntu-latest
@@ -61,6 +68,19 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install cmake ninja
 
+      - name: Build shared library (Windows, MSVC default generator)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cmake -B libyeptris-src/build -S libyeptris-src \
+            -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build --config Release
+          DLL="$(ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null | head -1)"
+          test -n "$DLL"
+          cp "$DLL" "$(dirname "$DLL")/libyeptris.dll"
+          echo "YEPTRIS_LIB=$(dirname "$DLL")/libyeptris.dll" >> "$GITHUB_ENV"
+
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
         with:
@@ -68,6 +88,7 @@ jobs:
           bundler-cache: true
 
       - name: Build shared library
+        if: runner.os != 'Windows'
         run: |
           cmake -B libyeptris-src/build -S libyeptris-src -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
@@ -75,11 +96,14 @@ jobs:
           cmake --build libyeptris-src/build
 
       - name: Build the native materializer
+        shell: bash
         run: |
           if [ "$(uname -s)" = "Darwin" ]; then
             export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.dylib"
-          else
+          elif [ "$(uname -s)" = "Linux" ]; then
             export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
+          else
+            export YEPTRIS_LIB_PATH="$YEPTRIS_LIB"
           fi
           export YEPTRIS_SRC="$GITHUB_WORKSPACE/libyeptris-src/src"
           cd ext/yeptris_native
@@ -88,11 +112,14 @@ jobs:
           cp native.bundle ../../lib/yeptris/ 2>/dev/null || cp native.so ../../lib/yeptris/
 
       - name: Run binding specs
+        shell: bash
         run: |
           if [ "$(uname -s)" = "Darwin" ]; then
             export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.dylib"
-          else
+          elif [ "$(uname -s)" = "Linux" ]; then
             export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
+          else
+            export YEPTRIS_LIB_PATH="$YEPTRIS_LIB"
           fi
           bundle exec rspec
 
@@ -187,6 +214,19 @@ jobs:
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: brew install cmake ninja
+
+      - name: Build shared library (Windows, MSVC default generator)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cmake -B libyeptris-src/build -S libyeptris-src \
+            -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build --config Release
+          DLL="$(ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null | head -1)"
+          test -n "$DLL"
+          cp "$DLL" "$(dirname "$DLL")/libyeptris.dll"
+          echo "YEPTRIS_LIB=$(dirname "$DLL")/libyeptris.dll" >> "$GITHUB_ENV"
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
