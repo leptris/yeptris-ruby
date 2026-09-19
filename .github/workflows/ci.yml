@@ -335,4 +335,10 @@ jobs:
           else
             export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
           fi
+          export YEPTRIS_SRC="$GITHUB_WORKSPACE/libyeptris-src/src"
+          cd ext/yeptris_native
+          ruby extconf.rb && make && \
+            { cp native.bundle ../../lib/yeptris/ 2>/dev/null || cp native.so ../../lib/yeptris/; } || \
+            echo "::warning::the optional native materializer did not build — the FFI ladder carries the load"
+          cd "$GITHUB_WORKSPACE"
           bundle exec ruby benchmark/cbor_profile.rb 200
