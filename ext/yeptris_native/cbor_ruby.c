@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "dom/dom.h"
+#include "doc.h" /* the public YeptrisDocument wrapper: ->dom */
 #include <yeptris/cbor.h>
 #include <yeptris/dom.h>
 #include <yeptris/resolve.h>
@@ -105,7 +106,12 @@ VALUE yep_rb_cbor_load(const char* p, size_t len, int strict) {
      * borrowed base dangles (the #160 CI bus error on 3.2/linux).
      * Same discipline as the JSON walk: GC off across decode+walk */
     VALUE gc_on = rb_gc_disable();
-    yep_dom* d = (yep_dom*)yeptris_cbor_decode(p, len, strict ? YEPTRIS_CBOR_STRICT : 0, &st);
+    /* YeptrisDocument is a WRAPPER (doc.h) — ->dom is the tree; a raw
+     * yep_dom* cast read the wrapper's fields as the dom (the CI
+     * segfaults: docs at the wrong offset) */
+    yeptris_document* doc = (yeptris_document*)yeptris_cbor_decode(
+        p, len, strict ? YEPTRIS_CBOR_STRICT : 0, &st);
+    yep_dom* d = (doc != NULL) ? doc->dom : NULL;
     if (d == NULL) {
         if (RTEST(gc_on)) {
             rb_gc_enable();
@@ -113,7 +119,7 @@ VALUE yep_rb_cbor_load(const char* p, size_t len, int strict) {
         return Qundef;
     }
     VALUE v = (d->dcount > 0 && d->docs[0] != UINT32_MAX) ? cr_walk(d, d->docs[0]) : Qnil;
-    yeptris_document_free((YeptrisDocument)d);
+    yeptris_document_free((YeptrisDocument)doc);
     if (RTEST(gc_on)) {
         rb_gc_enable();
     }
