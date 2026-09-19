@@ -21,3 +21,19 @@ end
 # rebind is this file's whole purpose
 Object.class_eval { remove_const(:Psych) } if defined?(::Psych) && !::Psych.equal?(Yeptris::Psych)
 ::Psych = Yeptris::Psych
+
+# yaml-first boot order: ::YAML still references the ORIGINAL stdlib
+# module object, whose singleton methods route through stdlib's parse
+# stream — the UTF-8 tagging (and every other normalization) never
+# runs (#135's spec/sdo discriminant). Delegate the original's public
+# singleton surface to the Yeptris face so BOTH constants behave
+# identically regardless of which module object a caller holds.
+::Psych::ORIGINAL.singleton_class.class_eval do
+  ::Psych::ORIGINAL.singleton_methods(false).each do |m|
+    next if m == :ORIGINAL
+
+    define_method(m) do |*args, **kwargs, &block|
+      ::Yeptris::Psych.public_send(m, *args, **kwargs, &block)
+    end
+  end
+end
