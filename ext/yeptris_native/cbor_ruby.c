@@ -6,6 +6,13 @@
  * order mappings), with no intermediate representation.
  */
 #include <ruby.h>
+/* rb_hash_new_capa is Ruby 3.2+; older Rubies grow dynamically (the
+ * json_ruby.c guard, verbatim). */
+#if RUBY_API_VERSION_MAJOR > 3 || (RUBY_API_VERSION_MAJOR == 3 && RUBY_API_VERSION_MINOR >= 2)
+#define HASH_NEW_CAPA(n) rb_hash_new_capa(n)
+#else
+#define HASH_NEW_CAPA(n) rb_hash_new()
+#endif
 #include <ruby/encoding.h>
 #include <stdlib.h>
 #include <string.h>
@@ -81,7 +88,7 @@ static VALUE cr_walk(const yep_dom* d, uint32_t id) {
     }
     case YEP_DOM_MAPPING: {
         long pairs = (long)(n->count / 2);
-        VALUE h = rb_hash_new_capa(pairs);
+        VALUE h = HASH_NEW_CAPA(pairs);
         uint32_t c = n->first_child;
         for (long i = 0; i < pairs && c != UINT32_MAX; i++) {
             VALUE k = cr_walk(d, c);
