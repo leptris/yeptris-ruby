@@ -100,11 +100,22 @@ static VALUE cr_walk(const yep_dom* d, uint32_t id) {
 
 VALUE yep_rb_cbor_load(const char* p, size_t len, int strict) {
     YeptrisStatus st = YEPTRIS_OK;
+    /* the DOM borrows the input buffer zero-copy; the walk ALLOCATES,
+     * and a GC compaction mid-walk moves the caller's String — the
+     * borrowed base dangles (the #160 CI bus error on 3.2/linux).
+     * Same discipline as the JSON walk: GC off across decode+walk */
+    VALUE gc_on = rb_gc_disable();
     yep_dom* d = (yep_dom*)yeptris_cbor_decode(p, len, strict ? YEPTRIS_CBOR_STRICT : 0, &st);
     if (d == NULL) {
+        if (RTEST(gc_on)) {
+            rb_gc_enable();
+        }
         return Qundef;
     }
     VALUE v = (d->dcount > 0 && d->docs[0] != UINT32_MAX) ? cr_walk(d, d->docs[0]) : Qnil;
     yeptris_document_free((YeptrisDocument)d);
+    if (RTEST(gc_on)) {
+        rb_gc_enable();
+    }
     return v;
 }
