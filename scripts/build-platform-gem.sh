@@ -85,6 +85,10 @@ if [ ! -d "$WORK/yeptris-ruby/.git" ]; then
   git clone --quiet "$RUBY_REPO" "$WORK/yeptris-ruby"
 fi
 cd "$WORK/yeptris-ruby"
+# platform gems vendor the prebuilt lib: they must NOT register the
+# source-build extension (toolchain-free installs). The marker must
+# sit beside yeptris.gemspec for the gemspec to see it.
+touch .yeptris-platform-gem
 LOCKSTEP="$(git tag | grep -E "^v${V//./\.}\.[0-9]+$" | sort -V | tail -1 || true)"
 if [ -n "$LOCKSTEP" ]; then
   git checkout --quiet "$LOCKSTEP"
@@ -156,10 +160,6 @@ if [ "$IS_WINDOWS" = "1" ]; then
   echo "native DLLs staged: $count"
   echo "::endgroup::"
 fi
-
-# platform gems vendor the prebuilt lib: they must NOT register the
-# source-build extension (toolchain-free installs)
-touch .yeptris-platform-gem
 
 echo "::group::Stage and build the platform gem"
 EXT=native.so
