@@ -44,6 +44,7 @@ module Yeptris
   autoload :ValueML, "yeptris/valueml"
   autoload :Psych, "yeptris/psych"
   autoload :Schema, "yeptris/schema"
+  autoload :CBOR, "yeptris/cbor"
 end
 
 # NOTE (the #318 poisoned-process class): the Psych error-name aliases

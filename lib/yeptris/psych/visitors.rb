@@ -41,6 +41,12 @@ module Yeptris
           BuiltDocument.new(@tree)
         end
 
+        # The raw document (the CBOR encoder consumes the tree
+        # directly; #tree wraps it for stdlib's yaml face)
+        def document
+          @tree
+        end
+
         def finish
           @tree.serialize(explicit_doc_start: true)
         end

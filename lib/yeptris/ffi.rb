@@ -230,6 +230,22 @@ module Yeptris
       false
     end
 
+    # CBOR (RFC 8949, TODO.cbor): absent on libraries before the
+    # codec's release — the CBOR module feature-detects
+    CBOR_EX = begin
+      attach_function :yeptris_cbor_decode, %i[pointer size_t uint32 yeptris_status_out],
+                      :yeptris_document
+      callback :cbor_item_cb, %i[pointer yeptris_document size_t], :int
+      attach_function :yeptris_cbor_decode_sequence,
+                      %i[pointer size_t uint32 cbor_item_cb pointer yeptris_status_out], :size_t
+      attach_function :yeptris_cbor_encode, %i[yeptris_document uint32 pointer], :pointer
+      attach_function :yeptris_cbor_encode_sequence,
+                      %i[pointer size_t uint32 pointer], :pointer
+      true
+    rescue ::FFI::NotFoundError
+      false
+    end
+
     # Owned char* results (serialize*): one reader, freed exactly once.
     # The release goes through yeptris_free (libyeptris's own
     # allocator-matching free) because ffi's :free attach has no
