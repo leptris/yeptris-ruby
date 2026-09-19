@@ -88,3 +88,29 @@ RSpec.describe Yeptris::CBOR, if: Yeptris::CBOR.available? do
     expect(round_trip(v)).to eq(v)
   end
 end
+
+RSpec.describe "Yeptris::CBOR.load_sequence exception safety" do
+  it "aborts the C iteration cleanly and re-raises when materializing raises mid-sequence" do
+    skip "no CBOR in this lib" unless Yeptris::CBOR.available?
+
+    seq = Yeptris::CBOR.dump_sequence([1, 2, 3])
+    calls = 0
+    doc_class = ::Yeptris::Document
+    orig = doc_class.instance_method(:root)
+    doc_class.define_method(:root) do |*args|
+      calls += 1
+      raise RuntimeError, "boom" if calls == 2
+      orig.bind_call(self, *args)
+    end
+    begin
+      # a raise inside an FFI callback leaves the return value
+      # undefined (a bare raise CONTINUES the C iteration — the C
+      # side reads 0 as success); the module must abort (nonzero)
+      # at item 2 and propagate the error without crashing
+      expect { Yeptris::CBOR.load_sequence(seq) }.to raise_error(RuntimeError, "boom")
+      expect(calls).to eq(2)
+    ensure
+      doc_class.define_method(:root, orig)
+    end
+  end
+end

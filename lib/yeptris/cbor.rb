@@ -41,17 +41,26 @@ module Yeptris
       raise Error, "libyeptris has no CBOR support" unless available?
 
       items = []
+      pending_error = nil
       receiver = ::FFI::Function.new(:int, %i[pointer pointer size_t]) do |_ctx, item, _index|
         # the callback owns the item; materialize then free in place
-        # (through the wrapper — the finalizer frees too)
-        doc = ::Yeptris::Document.new(item)
-        items << doc.root&.to_ruby
-        doc.free
-        0
+        # (through the wrapper — the finalizer frees too). A raise
+        # inside an FFI callback leaves the return value undefined —
+        # abort the C iteration cleanly (nonzero) and re-raise after
+        begin
+          doc = ::Yeptris::Document.new(item)
+          items << doc.root&.to_ruby
+          doc.free
+          0
+        rescue ::Exception => e # rubocop:disable Lint/RescueException
+          pending_error = e
+          1
+        end
       end
       st = ::Yeptris::FFI.yeptris_cbor_decode_sequence(
         data, data.bytesize, strict ? STRICT : 0, receiver, nil, nil
       )
+      raise pending_error if pending_error
       raise ParseError, ::Yeptris::FFI.last_error_message if st.zero? && !data.empty?
 
       items
