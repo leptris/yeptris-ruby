@@ -230,6 +230,7 @@ static const YeptrisVisitVTable k_vt = {
 
 /* fused JSON→Ruby (json_ruby.c) — no vtable, beats JSON.parse */
 VALUE yep_rb_parse_json(const char* p, size_t len, int strict_dup);
+VALUE yep_rb_cbor_load(const char* p, size_t len, int strict);
 
 static VALUE ctx_result(rb_ctx* c, YeptrisStatus st) {
     if (st != YEPTRIS_OK || c->failed) {
@@ -242,6 +243,18 @@ static VALUE ctx_result(rb_ctx* c, YeptrisStatus st) {
         rb_raise(rb_path2class("Yeptris::Error"), "native materialize failed (%d)", (int)st);
     }
     return c->root;
+}
+
+static VALUE native_cbor_load(int argc, VALUE* argv, VALUE self) {
+    (void)self;
+    VALUE input, strict;
+    rb_scan_args(argc, argv, "11", &input, &strict);
+    StringValue(input);
+    VALUE v = yep_rb_cbor_load(RSTRING_PTR(input), (size_t)RSTRING_LEN(input), RTEST(strict));
+    if (v == Qundef) {
+        rb_raise(rb_path2class("Yeptris::ParseError"), "native cbor decode failed");
+    }
+    return v;
 }
 
 static VALUE native_load_json(int argc, VALUE* argv, VALUE self) {
@@ -415,6 +428,7 @@ RUBY_FUNC_EXPORTED void Init_native(void) {
     VALUE mYep = rb_define_module("Yeptris");
     VALUE mNat = rb_define_module_under(mYep, "Native");
     rb_define_singleton_method(mNat, "load_json", native_load_json, -1);
+    rb_define_singleton_method(mNat, "cbor_load", native_cbor_load, -1);
     rb_define_singleton_method(mNat, "load", native_load, 2);
     rb_define_singleton_method(mNat, "load_stream", native_load_stream, 2);
     rb_define_singleton_method(mNat, "gc_mode", native_gc_mode, 0);
