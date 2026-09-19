@@ -51,11 +51,29 @@ jobs:
         run: |
           V="${{ inputs.version }}"
           PLAT="${{ matrix.platform && format('--platform {0}', matrix.platform) || '' }}"
-          if [ -n "$V" ]; then
-            gem install yeptris --version "$V" $PLAT
-          else
-            gem install yeptris $PLAT
-          fi
+          WANT_PLAT="${PLAT#--platform }"
+          for attempt in 1 2 3 4 5; do
+            if [ -n "$V" ]; then
+              gem install yeptris --version "$V" $PLAT
+            else
+              gem install yeptris $PLAT
+            fi
+            # a platform leg MUST resolve the platform gem: a
+            # just-pushed platform file can lag the resolver index
+            # (rubygems falls back to the pure gem silently), so
+            # verify the installed platform and retry with backoff
+            if [ -z "$WANT_PLAT" ]; then
+              break
+            fi
+            GOT=$(ruby -e 's = Gem::Specification.find_by_name("yeptris", Gem::Version.new(ARGV[0])); print s.platform.to_s' "$V" 2>/dev/null || true)
+            if [ "$GOT" = "$WANT_PLAT" ]; then
+              echo "resolved the $GOT platform gem"
+              break
+            fi
+            echo "attempt $attempt: resolved '${GOT:-none}', want $WANT_PLAT — index may lag"
+            gem uninstall yeptris --all --executables --force >/dev/null 2>&1 || true
+            sleep 60
+          done
           # Ruby 3.0's RubyGems (3.2) can mis-resolve --platform and
           # pull the musl gem onto a glibc host; verify and correct
           # via the explicit gem file (newer RubyGems legs are exact)
