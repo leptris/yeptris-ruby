@@ -89,6 +89,11 @@ cd "$WORK/yeptris-ruby"
 # source-build extension (toolchain-free installs). The marker must
 # sit beside yeptris.gemspec for the gemspec to see it.
 touch .yeptris-platform-gem
+# the C sources ride the compiled packages too (the distribution
+# contract): a prebuilt lib for zero-toolchain installs AND the tree
+# for anyone who wants to rebuild against their own toolchain
+mkdir -p vendor/libyeptris
+cp -R "$WORK/yeptris-c/CMakeLists.txt" "$WORK/yeptris-c/cmake" "$WORK/yeptris-c/src" vendor/libyeptris/ 2>/dev/null || true
 LOCKSTEP="$(git tag | grep -E "^v${V//./\.}\.[0-9]+$" | sort -V | tail -1 || true)"
 if [ -n "$LOCKSTEP" ]; then
   git checkout --quiet "$LOCKSTEP"
