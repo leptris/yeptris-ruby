@@ -28,12 +28,15 @@ Object.class_eval { remove_const(:Psych) } if defined?(::Psych) && !::Psych.equa
 # runs (#135's spec/sdo discriminant). Delegate the original's public
 # singleton surface to the Yeptris face so BOTH constants behave
 # identically regardless of which module object a caller holds.
-::Psych::ORIGINAL.singleton_class.class_eval do
-  ::Psych::ORIGINAL.singleton_methods(false).each do |m|
-    next if m == :ORIGINAL
-
-    define_method(m) do |*args, **kwargs, &block|
-      ::Yeptris::Psych.public_send(m, *args, **kwargs, &block)
+# ORIGINAL exists only when stdlib psych was already loaded (the
+# drop-in-before-psych order needs no delegation — nothing references
+# the original yet).
+if ::Yeptris::Psych.const_defined?(:ORIGINAL, false)
+  ::Psych::ORIGINAL.singleton_class.class_eval do
+    ::Psych::ORIGINAL.singleton_methods(false).each do |m|
+      define_method(m) do |*args, **kwargs, &block|
+        ::Yeptris::Psych.public_send(m, *args, **kwargs, &block)
+      end
     end
   end
 end
