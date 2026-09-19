@@ -66,10 +66,16 @@ module Yeptris
     # the caller's string (no arena copy, no second validating parse).
     # v2 records: numbers are spans at parse; yeptris_tape_convert
     # materializes them in one bulk call.
+    # v3 (libyeptris 0.6.9): the interleaved records (recs) are the
+    # primary storage on the lenient route; the strict route keeps the
+    # columns eager. The layout MUST mirror yeptris_json_tape — a stale
+    # layout makes C write past the FFI buffer (a silent heap overflow
+    # that only some allocators catch; the 0.6.9.1 windows crash).
     class JsonTape < ::FFI::Struct
       layout :count, :size_t, :kinds, :pointer, :offs, :pointer,
-             :lens, :pointer, :int_min, :int64, :_src, :pointer, :_srclen, :size_t,
-             :_block, :pointer
+             :lens, :pointer, :recs, :pointer, :_cols_ready, :int,
+             :_rec_primary, :int, :int_min, :int64, :_src, :pointer,
+             :_srclen, :size_t, :_block, :pointer
     end
 
     attach_function :yeptris_parse_json_tape, %i[pointer size_t pointer], :int
