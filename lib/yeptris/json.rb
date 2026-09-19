@@ -24,6 +24,7 @@ module Yeptris
     # behavior — strictness follows it (issue #37, found by canon's
     # CI where json 3.0.0 resolved while the dev box had 2.x).
     require "json"
+    require "date" # place_obj's `when Date` — psych loads it elsewhere, JSON.dump must not depend on that
     STRICT_DUPLICATE_KEYS = Gem::Version.new(::JSON::VERSION) >= Gem::Version.new("3")
 
     module_function
