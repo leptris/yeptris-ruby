@@ -235,12 +235,24 @@ module Yeptris
     # allocator-matching free) because ffi's :free attach has no
     # Windows process-symbol fallback — libyeptris.dll doesn't export
     # libc free, so resolving :free against it fails on Windows.
-    begin
+    # A raised attach ABORTS this file mid-evaluation — everything
+    # after it (NODE_SCALAR and the kind constants below) never
+    # defines, and a lazily autoloaded node.rb then dies with
+    # 'uninitialized constant' (#138). Every fallback attaches too.
+    YEPTRIS_FREE = begin
       attach_function :yeptris_free, [:pointer], :void
+      :direct
     rescue ::FFI::NotFoundError
-      # libyeptris < v0.6.6: POSIX resolves :free through the process
-      # symbol table, so the direct libc attach still works there.
-      attach_function :yeptris_free, :free, [:pointer], :void
+      begin
+        # libyeptris < v0.6.6: POSIX resolves :free through the
+        # process symbol table, so the libc attach still works there.
+        attach_function :yeptris_free, :free, [:pointer], :void
+        :libc
+      rescue ::FFI::NotFoundError
+        # no owned-buffer release on this lib+platform combination;
+        # Owned.string leaks instead of killing the whole file
+        :none
+      end
     end
 
     module Owned
@@ -258,7 +270,7 @@ module Yeptris
             else
               ptr.read_string.force_encoding(Encoding::UTF_8)
             end
-        ::Yeptris::FFI.yeptris_free(ptr)
+        ::Yeptris::FFI.yeptris_free(ptr) if ::Yeptris::FFI::YEPTRIS_FREE != :none
         s
       end
     end
