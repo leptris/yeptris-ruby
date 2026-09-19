@@ -26,6 +26,13 @@ module Yeptris
     def load(data, strict: false)
       raise Error, "libyeptris has no CBOR support" unless available?
 
+      # #157: the native materializer (decode + direct VALUE
+      # construction in one C pass) when the extension is loaded;
+      # the FFI ladder otherwise
+      if defined?(::Yeptris::Native) && ::Yeptris::Native.respond_to?(:cbor_load)
+        return ::Yeptris::Native.cbor_load(data, strict)
+      end
+
       doc_ptr = ::Yeptris::FFI.yeptris_cbor_decode(data, data.bytesize, strict ? STRICT : 0, nil)
       raise ParseError, ::Yeptris::FFI.last_error_message if doc_ptr.null?
 
