@@ -292,3 +292,47 @@ jobs:
           export YEPTRIS_NATIVE_SHAPE="${{ matrix.shape_mode || 'pre' }}"
           export GATE="${{ matrix.gate || (matrix.gated && '1.00') || '' }}"
           bundle exec ruby benchmark/json_profile.rb 200
+
+  # The CBOR referee (#157): interleaved A/B vs the cbor gem on a
+  # CI-fresh runner — the honest venue (dev-host isolated numbers are
+  # thermal fiction; the 2026-09-19 (ii) ledger entry).
+  cbor-profile:
+    name: CBOR profile (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve the C core ref
+        run: echo "YEP_C_REF=$(git ls-remote --tags --refs --sort=-v:refname https://github.com/leptris/yeptris.git 'v*' | head -1 | cut -d/ -f3)" >> "$GITHUB_ENV"
+
+      - name: Checkout libyeptris (the C core)
+        uses: actions/checkout@v4
+        with:
+          repository: leptris/yeptris
+          path: libyeptris-src
+          ref: ${{ env.YEP_C_REF }}
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - name: Run the profile
+        run: |
+          cmake -B libyeptris-src/build -S libyeptris-src -G Ninja             -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF             -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build
+          if [ "$(uname -s)" = "Darwin" ]; then
+            export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.dylib"
+          else
+            export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
+          fi
+          bundle exec ruby benchmark/cbor_profile.rb 200
