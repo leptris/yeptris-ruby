@@ -337,6 +337,7 @@ module Yeptris
     TAG_BOOL = 3
     TAG_NULL = 4
     TAG_TIMESTAMP = 5
+    TAG_BINARY = 8
 
     # the schema-descriptor API (issue #238; TODO.restructure/83)
     DESC_ABI = 1

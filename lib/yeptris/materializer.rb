@@ -37,6 +37,7 @@ module Yeptris
     TAG_BOOL = Yeptris::FFI::TAG_BOOL
     TAG_NULL = Yeptris::FFI::TAG_NULL
     TAG_TIMESTAMP = Yeptris::FFI::TAG_TIMESTAMP
+  TAG_BINARY = Yeptris::FFI::TAG_BINARY
     TAG_MERGE = 9 # YEPTRIS_TAG_MERGE (resolve.h): a plain '<<' key
 
     INF_WORDS = {
@@ -152,6 +153,8 @@ module Yeptris
           float_or_string(value)
         when TAG_TIMESTAMP
           parse_timestamp(value)
+        when TAG_BINARY
+          value.unpack1("m") # psych to_ruby: !binary -> decode64, ASCII-8BIT (#168)
         else
           value
         end
