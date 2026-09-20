@@ -13,13 +13,6 @@ RSpec.describe "scripts/audit_gem_doctrine.rb (#169)" do
 
   def build_gem(platform:, with_source: true, with_binary: false, with_ext: true)
     dir = Dir.mktmpdir
-    spec = Gem::Specification.new do |s|
-      s.name = "yeptris-test"
-      s.version = "0.0.0"
-      s.platform = platform
-      s.author = "t"
-      s.summary = "doctrine test gem"
-    end
     files = []
     if with_source
       files << "vendor/libyeptris/CMakeLists.txt"
@@ -29,18 +22,38 @@ RSpec.describe "scripts/audit_gem_doctrine.rb (#169)" do
     files << "ext/libyeptris/extconf.rb" if with_ext && !with_source
     files << "lib/yeptris/native-3.4.so" if with_binary
     files << "lib/libyeptris.dylib" if with_binary && platform.to_s.include?("darwin")
-    spec.files = files
     files.each do |f|
       path = File.join(dir, f)
       FileUtils.mkdir_p(File.dirname(path))
       File.write(path, "x")
     end
-    built = Dir.chdir(dir) { Gem::Package.build(spec) }
-    File.expand_path(built, dir)
+    # a clean subprocess: under this suite another spec may have
+    # rebound ::Psych, and gem build's internal to_yaml must not
+    # route through the rebind (real assemblies never run under it)
+    builder = File.join(dir, "build_gem.rb")
+    File.write(builder, <<~RUBY)
+      require "rubygems/package"
+      spec = Gem::Specification.new do |s|
+        s.name = "yeptris-test"
+        s.version = "0.0.0"
+        s.platform = #{platform.inspect}
+        s.author = "t"
+        s.summary = "doctrine test gem"
+        s.files = #{files.inspect}
+      end
+      print Gem::Package.build(spec)
+    RUBY
+    out = IO.popen([RbConfig.ruby, builder], chdir: dir, err: "/dev/null", &:read)
+    name = out[/File:\s*(\S+\.gem)/, 1]
+    abort "gem build produced no gem: #{out.inspect}" if name.nil?
+    File.join(dir, name)
   end
 
   def run_audit(gem)
-    system(RbConfig.ruby, script, gem, out: File::NULL, err: File::NULL)
+    require "open3"
+    out, st = Open3.capture2e(RbConfig.ruby, script, gem)
+    warn "audit output: #{out.inspect}" unless st.success?
+    st.success?
   end
 
   after { FileUtils.remove_entry(Dir.mktmpdir) if false } # tmpdirs GC'd; gems are self-contained
