@@ -209,5 +209,9 @@ GEMFILE="$(ruby -e '
 ' 2>/dev/null | grep -oE "[A-Za-z0-9._-]+\.gem" | tail -1)"
 echo "platform: $PLATFORM"
 echo "gem: $GEMFILE"
+# packaging doctrine (#169): the built gem must carry the prebuilt
+# engine AND its build inputs — a failure fails the leg, not just a
+# review note
+ruby scripts/audit_gem_doctrine.rb "$GEMFILE"
 echo "gempath=$WORK/yeptris-ruby/$GEMFILE" > "$WORK/gempath"
 echo "::endgroup::"
