@@ -9,13 +9,22 @@ module Yeptris
     module_function
 
     KIND = { scalar: 0, sequence: 1, mapping: 2, callback: 3 }.freeze
-    TYPE = { str: 0, int: 1, float: 2, bool: 3, null: 4 }.freeze
+    TYPE = { str: 0, int: 1, float: 2, bool: 3, null: 4, any: 5 }.freeze
     REQUIRED = 1 << 0
+    FIRST_WINS = 1 << 1 # duplicates within one mapping: first kept
+
+    # The :any verdict (#238's headroom): the resolver's own typing,
+    # one 24-byte record per value — Integer/Float/true/false/nil, a
+    # zero-copy String for str/timestamp spans
+    ANY_SIZE = 24 # yeptris_value.h's YeptrisValue: kind@0 tag_id@1
+    # is_key@2 b@3 off@4 len@8 p@16 — the C layout, ABI-pinned
+    ANY_KIND = { 1 => :null, 2 => :bool, 3 => :int, 4 => :float,
+                 5 => :str, 6 => :timestamp }.freeze
 
     class Error < Yeptris::Error; end
     class RequiredMissing < Error; end
 
-    ELEMENT_SIZE = { 0 => 16, 1 => 8, 2 => 8, 3 => 1, 4 => 1 }.freeze # by TYPE value
+    ELEMENT_SIZE = { 0 => 16, 1 => 8, 2 => 8, 3 => 1, 4 => 1, 5 => ANY_SIZE }.freeze # by TYPE value
 
     # A materialized span: zero-copy off/len into the source plus the
     # node's byte offset (the CALLBACK escape hatch).
@@ -47,7 +56,7 @@ module Yeptris
         { kind: KIND.fetch(n.fetch(:kind)),
           type: TYPE.fetch(n[:type] || :str),
           wire: n[:wire_name],
-          flags: n[:required] ? REQUIRED : 0,
+          flags: (n[:required] ? REQUIRED : 0) | (n[:first_wins] ? FIRST_WINS : 0),
           child_index: n[:child_index] || 0,
           child_count: n[:child_count] || 0 }
       end
@@ -120,6 +129,16 @@ module Yeptris
           when TYPE[:float] then data.get_double(k * 8)
           when TYPE[:bool] then data.get_uchar(k) == 1
           when TYPE[:null] then nil
+          when TYPE[:any]
+            rec = k * ANY_SIZE
+            case ANY_KIND[data.get_uint8(rec)]
+            when :int then data.get_int64(rec + 16)
+            when :float then data.get_double(rec + 16)
+            when :bool then data.get_uint8(rec + 3) == 1
+            when :null then nil
+            else # str/timestamp: the zero-copy span
+              source.byteslice(data.get_uint32(rec + 4), data.get_uint32(rec + 8))
+            end
           else
             off = data.get_uint32(k * 16)
             len = data.get_uint32(k * 16 + 4)
