@@ -121,6 +121,7 @@ class Yeptris::Node
     Yeptris::FFI::TAG_BOOL => :bool,
     Yeptris::FFI::TAG_NULL => :null,
     Yeptris::FFI::TAG_TIMESTAMP => :timestamp,
+    Yeptris::FFI::TAG_BINARY => :binary,
   }.freeze
 
   def tag_id
@@ -351,6 +352,7 @@ class Yeptris::Node
         to_f
       end
     when :timestamp then ::Yeptris::Materializer.parse_timestamp(value)
+    when :binary then value.unpack1("m") # ASCII-8BIT bytes (#168)
     else
       # beyond int64 the C resolver leaves plain scalars :str; Psych
       # materializes Integer (issue #31) — rebuild from the text

@@ -165,7 +165,18 @@ module Yeptris
       def force_utf8_scalars(obj)
         case obj
         when ::String
-          obj.force_encoding(::Encoding::UTF_8) if obj.encoding == ::Encoding::ASCII_8BIT && !obj.ascii_only?
+          # valid_encoding? on an ASCII-8BIT string is ALWAYS true
+          # (it is bytes) — the discriminator is whether the bytes
+          # READ as UTF-8: #135's case (UTF-8 scalars the C side
+          # materialized as BINARY) re-tags; DECODED !binary bytes
+          # that are not UTF-8 stay BINARY (#168). Binary content that
+          # happens to be valid UTF-8 re-tags — noted divergence from
+          # stdlib, which keeps BINARY; real payloads (zips, bodies)
+          # never are.
+          if obj.encoding == ::Encoding::ASCII_8BIT && !obj.ascii_only?
+            probe = obj.dup.force_encoding(::Encoding::UTF_8)
+            obj.force_encoding(::Encoding::UTF_8) if probe.valid_encoding?
+          end
           obj
         when ::Hash
           obj.each { |k, v| force_utf8_scalars(k); force_utf8_scalars(v) }
@@ -307,7 +318,9 @@ module Yeptris
         when :scalar, :mapping, :sequence
           tag = node.tag
           unless tag.nil?
-            name = tag.split(":").last
+            # both tag spellings pass: the URI form's last segment and
+            # the short "!binary" shorthand (#168's cassettes carry it)
+            name = tag.split(":").last.sub(/\A!/, "")
             unless %w[str int float bool null timestamp seq map merge value
                       binary].include?(name)
               raise DisallowedClass, name

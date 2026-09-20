@@ -192,7 +192,19 @@ module Yeptris
             obj.each { |e| place(e, emit, blob, off, seen) }
             emit.call(STOP, 0, 0, 0)
           end
-        when String then scalar(obj, STYLE_BY_NAME[string_style(obj)], emit, blob, off)
+        when String
+          if obj.encoding == ::Encoding::ASCII_8BIT && !obj.ascii_only?
+            # #168: psych visit_String's binary branch — strict base64
+            # + the short !binary tag + literal style (Builder
+            # build_string carries the same branch; the tagged-literal
+            # writer keeps the block form)
+            scalar([obj].pack("m0"), STYLE_LIT, emit, blob, off)
+            emit.call(BUILD_TAG, 0, off[0], 7)
+            blob << "!binary"
+            off[0] += 7
+          else
+            scalar(obj, STYLE_BY_NAME[string_style(obj)], emit, blob, off)
+          end
         when Symbol then scalar(":#{obj}", STYLE_PLAIN, emit, blob, off)
         when Integer then scalar(obj.to_s, STYLE_PLAIN, emit, blob, off)
         when Float then scalar(float_text(obj), STYLE_PLAIN, emit, blob, off)
@@ -351,6 +363,17 @@ module Yeptris
       # visit_String matrix) serves both builders; this side carries
       # the style onto the per-node DOM.
       def build_string(doc, s)
+        # psych 5.5 visit_String's binary branch, verbatim: an
+        # ASCII-8BIT string with non-ASCII bytes emits as strict base64
+        # (pack('m0'), never wrapped) under the short !binary tag with
+        # literal style — the writer keeps the block form for tagged
+        # literals (#168). BOTH dump paths converge here (the top-level
+        # scalar fast route and the YAMLTree visitor).
+        if s.encoding == ::Encoding::ASCII_8BIT && !s.ascii_only?
+          bin = new_scalar(doc, [s].pack("m0"), :force_lit)
+          bin.set_tag("!binary")
+          return bin
+        end
         case BulkBuilder.string_style(s)
         when :single then new_scalar(doc, s, :force_str_sq)
         when :double then new_scalar(doc, s, :force_str)
