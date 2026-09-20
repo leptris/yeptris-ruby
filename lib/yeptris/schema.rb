@@ -22,6 +22,21 @@ module Yeptris
                  5 => :str, 6 => :timestamp }.freeze
 
     class Error < Yeptris::Error; end
+
+    # #238's executed headroom (ST_ANY/FIRST_WINS) rides the C tag
+    # AFTER v0.6.12; probe the engine rather than trusting versions
+    class << self
+      def headroom_supported?
+        return @headroom_supported unless @headroom_supported.nil?
+        @headroom_supported = begin
+          load("x: 1\n",
+               desc: [{ kind: :mapping, child_index: 1, child_count: 1 },
+                      { wire_name: "x", kind: :scalar, type: :any }]) && true
+        rescue Error, Yeptris::ParseError, Yeptris::Error
+          false
+        end
+      end
+    end
     class RequiredMissing < Error; end
 
     ELEMENT_SIZE = { 0 => 16, 1 => 8, 2 => 8, 3 => 1, 4 => 1, 5 => ANY_SIZE }.freeze # by TYPE value
