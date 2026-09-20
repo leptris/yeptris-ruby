@@ -13,6 +13,13 @@ RSpec.describe "Yeptris::Psych::VERSION (#167)" do
   end
 
   it "falls back to the default-gem spec when psych was not preloaded" do
+    skip "no psych gem spec resolvable in this bundle (the 3.0 vendored bundle)" if
+      (::Gem.loaded_specs["psych"] ||
+       (begin
+          ::Gem::Specification.find_by_name("psych", ::Gem::Requirement.default)
+        rescue ::StandardError, ::Gem::Exception
+          nil
+        end)).nil?
     # a fresh interpreter without stdlib psych: the drop-in resolves
     # the version from the bundled default gem's spec (no network)
     out = <<~RUBY
