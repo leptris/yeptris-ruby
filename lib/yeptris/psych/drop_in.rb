@@ -35,7 +35,7 @@ unless Yeptris::Psych.const_defined?(:VERSION, false)
       spec = begin
         ::Gem.loaded_specs["psych"] ||
           ::Gem::Specification.find_by_name("psych", ::Gem::Requirement.default)
-      rescue ::StandardError, ::Gem::Exception
+      rescue ::StandardError, ::Gem::Exception, ::LoadError
         nil
       end
       spec&.version&.to_s

@@ -17,7 +17,7 @@ RSpec.describe "Yeptris::Psych::VERSION (#167)" do
       (::Gem.loaded_specs["psych"] ||
        (begin
           ::Gem::Specification.find_by_name("psych", ::Gem::Requirement.default)
-        rescue ::StandardError, ::Gem::Exception
+        rescue ::StandardError, ::Gem::Exception, ::LoadError
           nil
         end)).nil?
     # a fresh interpreter without stdlib psych: the drop-in resolves
