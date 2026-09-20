@@ -28,6 +28,32 @@ module Yeptris
       MSG
     end
 
+    class << self
+      # #138's class, hit again by the oiml-cs report: a stale
+      # libyeptris on the machine (the Windows base-name dedupe makes
+      # a system copy win) lacks newer symbols, and a raising attach
+      # aborts this file mid-evaluation — every constant after it
+      # never defines, so the next autoload dies with
+      # 'uninitialized constant Yeptris::FFI::NODE_SCALAR'. Attaches
+      # now record the miss and define a raising stub of the same
+      # name: the load completes, optional surfaces fail with a clear
+      # message at USE, and the ESSENTIAL self-check at the bottom of
+      # this file raises the friendly load error for truly old
+      # engines.
+      def attach_function(name, args, ret, opts = {})
+        super
+      rescue ::FFI::NotFoundError, ::FFI::TypeError
+        define_singleton_method(name) do |*_a, **_kw|
+          raise ::FFI::NotFoundError,
+                "yeptris: #{name} is unavailable — the loaded " \
+                "libyeptris is older than this gem. Update the engine " \
+                "library (or clear the stale copy shadowing it)."
+        end
+        (@missing ||= []) << name
+        nil
+      end
+    end
+
 
     typedef :pointer, :yeptris_document
     typedef :pointer, :yeptris_node
@@ -194,18 +220,14 @@ module Yeptris
     # instead of walking per-value records in pure Ruby. Same feature-
     # detect discipline as the columnar drain (older libraries fall
     # back to the record walk).
-    MARSHAL = begin
-      MARSHAL_ALL_DOCS = 0
-      MARSHAL_FIRST_DOC = 1
-      attach_function :yeptris_marshal,
-                      %i[pointer size_t int int pointer pointer], :int
-      attach_function :yeptris_marshal_node,
-                      %i[yeptris_node pointer pointer], :int
-      attach_function :yeptris_marshal_free, [:pointer], :void
-      true
-    rescue ::FFI::NotFoundError
-      false
-    end
+    MARSHAL_ALL_DOCS = 0
+    MARSHAL_FIRST_DOC = 1
+    attach_function :yeptris_marshal,
+                    %i[pointer size_t int int pointer pointer], :int
+    attach_function :yeptris_marshal_node,
+                    %i[yeptris_node pointer pointer], :int
+    attach_function :yeptris_marshal_free, [:pointer], :void
+    MARSHAL = !(@missing ||= []).include?(:yeptris_marshal_node)
 
     # bulk build (TODO.impl/15 phase D): one call raises a document
     BUILD_SCALAR = 1
@@ -238,19 +260,15 @@ module Yeptris
 
     # CBOR (RFC 8949, TODO.cbor): absent on libraries before the
     # codec's release — the CBOR module feature-detects
-    CBOR_EX = begin
-      attach_function :yeptris_cbor_decode, %i[pointer size_t uint32 yeptris_status_out],
-                      :yeptris_document
-      callback :cbor_item_cb, %i[pointer yeptris_document size_t], :int
-      attach_function :yeptris_cbor_decode_sequence,
-                      %i[pointer size_t uint32 cbor_item_cb pointer yeptris_status_out], :size_t
-      attach_function :yeptris_cbor_encode, %i[yeptris_document uint32 pointer], :pointer
-      attach_function :yeptris_cbor_encode_sequence,
-                      %i[pointer size_t uint32 pointer], :pointer
-      true
-    rescue ::FFI::NotFoundError
-      false
-    end
+    attach_function :yeptris_cbor_decode, %i[pointer size_t uint32 yeptris_status_out],
+                    :yeptris_document
+    callback :cbor_item_cb, %i[pointer yeptris_document size_t], :int
+    attach_function :yeptris_cbor_decode_sequence,
+                    %i[pointer size_t uint32 cbor_item_cb pointer yeptris_status_out], :size_t
+    attach_function :yeptris_cbor_encode, %i[yeptris_document uint32 pointer], :pointer
+    attach_function :yeptris_cbor_encode_sequence,
+                    %i[pointer size_t uint32 pointer], :pointer
+    CBOR_EX = !(@missing ||= []).include?(:yeptris_cbor_decode)
 
     # Owned char* results (serialize*): one reader, freed exactly once.
     # The release goes through yeptris_free (libyeptris's own
@@ -368,5 +386,24 @@ module Yeptris
     ERROR_ARG = 6
     ERROR_UNSUPPORTED = 7
     ERROR_INTERNAL = 8
+    # The load-time essentials (the read path + the ownership
+    # contract): absent on engines far older than the optional
+    # surfaces — raise the friendly error once every constant has
+    # fully defined, so no partial-module state leaks into autoloads
+    # (the #138 class, closed at the root).
+    ESSENTIAL = %i[
+      yeptris_version yeptris_last_error yeptris_parse yeptris_parse_ex
+      yeptris_parse_json yeptris_document_free yeptris_document_count
+      yeptris_document_root yeptris_node_kind yeptris_node_value
+      yeptris_node_tag_id yeptris_node_style yeptris_document_new
+      yeptris_document_set_root yeptris_serialize yeptris_serialize_ex
+    ].freeze
+    missing_core = ESSENTIAL & (@missing ||= [])
+    raise ::FFI::NotFoundError,
+          "yeptris: the loaded libyeptris is older than this gem " \
+          "requires (missing: #{missing_core.join(', ')}). Update the " \
+          "engine library, or clear the stale copy shadowing it." \
+          unless missing_core.empty?
+
   end
 end
