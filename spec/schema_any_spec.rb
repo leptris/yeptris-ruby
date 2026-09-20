@@ -5,6 +5,11 @@
 # first_wins: bounds a duplicate key's column to its first match
 # within one mapping.
 RSpec.describe "Yeptris::Schema :any + first_wins (#238 headroom)" do
+  before do
+    unless Yeptris::Schema.headroom_supported?
+      skip "the engine tag predates the headroom execution (yeptris#366; the next C release carries it)"
+    end
+  end
   it "materializes typed values by the resolver's verdict" do
     desc = [
       { kind: :mapping, child_index: 1, child_count: 4 },
