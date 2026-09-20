@@ -43,7 +43,7 @@ RSpec.describe "scripts/audit_gem_doctrine.rb (#169)" do
       end
       print Gem::Package.build(spec)
     RUBY
-    out = IO.popen([RbConfig.ruby, builder], chdir: dir, err: "/dev/null", &:read)
+    out = IO.popen([RbConfig.ruby, builder], chdir: dir, err: File::NULL, &:read)
     name = out[/File:\s*(\S+\.gem)/, 1]
     abort "gem build produced no gem: #{out.inspect}" if name.nil?
     File.join(dir, name)
