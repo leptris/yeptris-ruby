@@ -339,7 +339,32 @@ class Yeptris::Node
       h = {}
       memo[node_id] = h
       each_pair do |k, v|
-        h[k.to_ruby_key] = v.to_ruby(memo)
+        key = k.to_ruby_key
+        val = v.to_ruby(memo)
+        if key == "<<" && k.tag != "tag:yaml.org,2002:str"
+          # stdlib revive_hash's merge branch: the VALUE's node kind
+          # picks the arm; every merge is TypeError-guarded (a bad
+          # element keeps the whole '<<' pair literal)
+          if v.kind == :alias || v.mapping?
+            begin
+              h.merge!(val)
+            rescue ::TypeError
+              h[key] = val
+            end
+          elsif v.sequence?
+            begin
+              merged = {}
+              val.reverse_each { |e| merged.merge!(e) }
+              h.merge!(merged)
+            rescue ::TypeError
+              h[key] = val
+            end
+          else
+            h[key] = val
+          end
+        else
+          h[key] = val
+        end
       end
       h
     when :sequence
@@ -349,7 +374,11 @@ class Yeptris::Node
       a
     when :alias
       t = alias_target
-      t.nil? ? nil : t.to_ruby(memo)
+      if t.nil?
+        raise ::Yeptris::Psych::AnchorNotDefined,
+              "Unknown anchor: #{anchor}"
+      end
+      t.to_ruby(memo)
     else
       scalar_to_ruby
     end

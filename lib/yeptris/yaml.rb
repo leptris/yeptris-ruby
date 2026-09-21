@@ -177,6 +177,14 @@ module Yeptris
                 off[0] += 1
               elsif k.is_a?(Symbol)
                 scalar(":#{k}", STYLE_PLAIN, emit, blob, off)
+              elsif k.is_a?(String) && k == "<<"
+                # stdlib yaml_tree: a literal chevron key carries the
+                # explicit !!str tag (single-quoted) so it does not
+                # re-load as a merge
+                scalar("<<", STYLE_SQ, emit, blob, off)
+                emit.call(BUILD_TAG, 0, off[0], 5)
+                blob << "!!str"
+                off[0] += 5
               elsif k.is_a?(String)
                 place(k, emit, blob, off, seen)
               else
@@ -342,6 +350,12 @@ module Yeptris
             if k.nil?
               key_node = doc.new_scalar("", :single_quoted)
               key_node.set_tag("!")
+              m.map_add_node(key_node, build(doc, v, seen))
+            elsif k.is_a?(::String) && k == "<<"
+              # stdlib yaml_tree: a literal chevron key carries the
+              # explicit !!str tag so it does not re-load as a merge
+              key_node = doc.new_scalar("<<", :single_quoted)
+              key_node.set_tag("!!str")
               m.map_add_node(key_node, build(doc, v, seen))
             else
               m.map_add(key_text(k), build(doc, v, seen))
