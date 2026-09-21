@@ -327,6 +327,11 @@ module Yeptris
         # data anyway
         out =
           case obj
+          # DateTime < Date in ruby's hierarchy — the fast scalar
+          # path would emit it tag-less iso8601 (re-loading as Time);
+          # the visitor carries stdlib's !ruby/object:DateTime tag
+          when ::DateTime
+            Visitors::YAMLTree.new.push(obj).finish
           when nil, true, false, ::String, ::Integer, ::Float, ::Symbol, ::Date, ::Time
             Yeptris::YAML.dump(obj, header: true)
           else

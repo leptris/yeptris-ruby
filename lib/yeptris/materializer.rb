@@ -115,7 +115,11 @@ module Yeptris
       end
 
       def parse_timestamp(v)
-        return Date.parse(v) unless v.match?(/[Tt ]\d/)
+        # stdlib scalar_scanner: date-only strings parse with
+        # strptime('%F', Date::GREGORIAN) — the PROLEPTIC calendar —
+        # not Date.parse's default ITALY reform (a 1582 cycle fails
+        # the ported test_julian_date otherwise)
+        return ::Date.strptime(v, "%F", ::Date::GREGORIAN) unless v.match?(/[Tt ]\d/)
 
         # normalize the YAML 1.1 space forms onto iso8601 for
         # xmlschema: "2001-12-14 21:59:43.10 -05:00" ->
