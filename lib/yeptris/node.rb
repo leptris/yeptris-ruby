@@ -394,6 +394,15 @@ class Yeptris::Node
   def scalar_to_ruby
     return symbolize if symbol? && tag_id == :str
 
+    # stdlib deserialize's tagged-scalar arms: the class tag carries
+    # DateTime (dumped tagged — a plain timestamp re-loads as Time)
+    if tag == "!ruby/object:DateTime"
+      ts = value.to_s.sub(/ (\d)/, 'T\\1').sub(/ ([+-]\d)/, '\\1')
+      t = ::Time.xmlschema(ts)
+      return ::DateTime.civil(t.year, t.month, t.day, t.hour, t.min, t.sec,
+                              Rational(t.utc_offset, 86_400)) + Rational(t.subsec, 86_400)
+    end
+
     case tag_id
     when :null then nil
     when :bool then to_bool

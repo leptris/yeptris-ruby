@@ -66,11 +66,32 @@ module Yeptris
           end
         end
 
+        # stdlib register()s every object — scalars included — so a
+        # repeated scalar dumps &name/*name (test_float_references,
+        # test_alias_with_time). Containers already route through
+        # anchor_for; this is the scalar arm of the same machinery.
+        def anchored_scalar(obj, text: nil, tag: nil)
+          state, name = anchor_for(obj)
+          return alias_of(obj, name) if state == :alias
+
+          n = scalar(text || obj, tag: tag)
+          n.set_anchor(name) if name
+          remember(obj, n)
+          n
+        end
+
         def visit(obj)
           case obj
-          when nil, true, false, ::Integer, ::Float, ::String then scalar(obj)
+          when nil, true, false, ::Integer then scalar(obj)
+          when ::Float, ::String then anchored_scalar(obj)
           when ::Symbol then @tree.new_scalar(":#{obj}", :plain) # psych emits symbols bare, never through visit_String's quoting rules
-          when ::Date, ::Time then scalar(obj) # timestamp text, never ivars
+          # stdlib visit_DateTime: the class tag carries the type (a
+          # plain timestamp re-loads as Time) — "!ruby/object:DateTime
+          # 2017-04-13 12:00:00.500000000 +09:00", to_s text, one line
+          when ::DateTime
+            anchored_scalar(obj, text: obj.strftime("%F %H:%M:%S.%9N %:z"),
+                            tag: "!ruby/object:DateTime")
+          when ::Date, ::Time then anchored_scalar(obj) # timestamp text, never ivars
           when ::Hash then visit_hash(obj)
           when ::Array then visit_array(obj)
           when ::Struct then visit_struct(obj)
@@ -101,7 +122,7 @@ module Yeptris
           if @refs[oid] < 2
             return [:none, nil]
           end
-          name = "o#{@counter += 1}"
+          name = (@counter += 1).to_s # stdlib: &1, *1
           @names[oid] = name
           [:new, name]
         end
@@ -156,7 +177,7 @@ module Yeptris
               # neutral surface alone was pinned)
               ::Yeptris::YAML::BulkBuilder.time_text(obj)
             elsif obj.is_a?(::Date)
-              obj.iso8601 # canonical calendar form (DateTime rides here too)
+              obj.iso8601 # canonical calendar form
             elsif obj.nil?
               "" # libyaml's null rendering rides bare (issue #290)
             elsif obj.is_a?(::Float)
@@ -165,7 +186,7 @@ module Yeptris
               obj.to_s
             end
           n =
-            if obj.is_a?(::String)
+            if obj.is_a?(::String) && !tag
               ::Yeptris::YAML::Builder.build_string(@tree, obj)
             else
               @tree.new_scalar(text, :plain)
@@ -220,7 +241,7 @@ module Yeptris
           m = @tree.new_mapping
           remember(strct, m)
           m.set_anchor(name) if name
-          m.set_tag(strct.class.name ? "!ruby/struct:#{strct.class.name}" : "!ruby/struct")
+          m.set_tag(strct.class.name.to_s.empty? ? "!ruby/struct" : "!ruby/struct:#{strct.class.name}")
           strct.each_pair { |k, v| m.map_add(key_text(k), visit(v)) }
           m
         end
@@ -326,6 +347,9 @@ module Yeptris
             when ::Yeptris::Psych::Nodes::Mapping then visit_mapping(node)
             else node&.to_ruby
             end
+          # stdlib register(): an anchored node's result is THE object
+          # for every alias to that anchor (scalars included)
+          anchors[node.anchor] = result if node.respond_to?(:anchor) && node.anchor
           # the domain-types post-pass (stdlib ToRuby#accept's tail):
           # registered blocks transform the revived result per node
           if node && !::Yeptris::Psych.domain_types.empty?
