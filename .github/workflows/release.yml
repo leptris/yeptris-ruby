@@ -1,0 +1,421 @@
+name: release
+
+# The binding's own release train (the leptris-ruby pattern): one
+# dispatch bumps VERSION, pushes the lockstep tag, builds every
+# platform gem in-repo, verifies Ruby-source parity across variants,
+# and publishes through RubyGems Trusted Publishing. The engine's
+# republish_version flow (leptris/yeptris release.yml) stays valid —
+# both paths are idempotent against rubygems (already-pushed skips).
+#
+# Version scheme: {C-semver}.{binding-patch} — 0.6.17.1 for C 0.6.17.
+# The build script clones the ENGINE at v{C-semver}, so an in-repo
+# release requires the C tag to exist first (merge/cut C, then
+# dispatch here).
+
+on:
+  workflow_dispatch:
+    inputs:
+      next_version:
+        description: 'Version to release (e.g. 0.6.17.1). Leave empty to use current VERSION.'
+        type: string
+        required: false
+
+concurrency:
+  group: 'release-${{ inputs.next_version || github.ref }}'
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  bump:
+    if: github.event_name == 'workflow_dispatch' && inputs.next_version != ''
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.bump.outputs.sha }}
+      version: ${{ steps.bump.outputs.new-version }}
+      c_semver: ${{ steps.bump.outputs.c-semver }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@master
+        with:
+          ruby-version: '3.3'
+
+      - name: Bump VERSION (lib/yeptris.rb)
+        id: bump
+        shell: bash
+        env:
+          NEXT_VERSION: ${{ inputs.next_version }}
+        run: |
+          set -euo pipefail
+          # The lockstep scheme {C-semver}.{binding-patch}: X.Y.Z.W.
+          # Relative bumps (patch) move the BINDING segment. The guard
+          # exists because a non-semver input once produced a junk tag
+          # literally named "v" (the sibling project's incident).
+          INPUT="${NEXT_VERSION}"
+          if [[ "$INPUT" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            :
+          elif [[ "$INPUT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            : # an exact C-semver-shaped binding version is accepted as-is
+          elif [[ "$INPUT" == "major" || "$INPUT" == "minor" || "$INPUT" == "patch" ]]; then
+            CURRENT=$(ruby -Ilib -ryeptris -e 'puts Yeptris::VERSION' 2>/dev/null || \
+                      sed -n 's/.*VERSION = "\(.*\)".*/\1/p' lib/yeptris.rb | head -1)
+            IFS=. read -r A B C D <<< "$CURRENT"
+            D="${D:-0}"
+            case "$INPUT" in
+              major) A=$((A + 1)); B=0; C=0; D=0 ;;
+              minor) B=$((B + 1)); C=0; D=0 ;;
+              patch) D=$((D + 1)) ;;
+            esac
+            INPUT="${A}.${B}.${C}.${D}"
+          else
+            echo "::error::next_version must be X.Y.Z.W (lockstep), X.Y.Z, or major/minor/patch, got '${INPUT}'"
+            exit 1
+          fi
+          echo "Releasing ${INPUT}"
+          sed -i "s/VERSION = \".*\"/VERSION = \"${INPUT}\"/" lib/yeptris.rb
+          NEW_VERSION=$(sed -n 's/.*VERSION = "\(.*\)".*/\1/p' lib/yeptris.rb | head -1)
+          if [ "${NEW_VERSION}" != "${INPUT}" ]; then
+            echo "::error::bump did not take (lib/yeptris.rb reads '${NEW_VERSION}')"
+            exit 1
+          fi
+          # The C-semver the build script clones the engine at
+          C_SEMVER="$(echo "${NEW_VERSION}" | cut -d. -f1-3)"
+          echo "new-version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "c-semver=${C_SEMVER}" >> "$GITHUB_OUTPUT"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/yeptris.rb
+          if git diff --cached --quiet; then
+            echo "No version change; tagging current HEAD."
+          else
+            git commit -m "release: ${NEW_VERSION} (lockstep with C v${C_SEMVER})"
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Push bump commit + tag
+        env:
+          NEW_VERSION: ${{ steps.bump.outputs.new-version }}
+        run: |
+          git push origin "HEAD:${{ github.event.repository.default_branch }}"
+          git tag "v${NEW_VERSION}" HEAD
+          # A failed run can leave its tag behind while the gems never
+          # published; the publish loop is idempotent, so re-dispatching
+          # the same version must not die on the tag.
+          git push origin "v${NEW_VERSION}" || \
+            echo "::warning::tag v${NEW_VERSION} already exists — continuing"
+
+  build-native:
+    needs: bump
+    if: always() && !cancelled() && !failure()
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
+          # macos-latest rides ARM and would double-build arm64-darwin
+          # (the two legs race on gem push). Pinned legs only.
+          - os: macos-15
+          - os: macos-15-intel
+          - os: windows-latest
+          # x64-mingw32 is Ruby <= 3.0 (msvcrt ABI): the script's mingw
+          # branch keys on this Ruby's platform
+          - os: windows-latest
+            ruby-version: '3.0'
+          - os: windows-11-arm
+            ruby-version: '3.4'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump.outputs.sha || github.ref }}
+
+      - name: Install build tooling
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq cmake ninja-build >/dev/null
+
+      - name: Install build tooling (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja
+
+      - name: Resolve the engine version and lockstep tag
+        shell: bash
+        run: |
+          echo "YEP_V=${{ needs.bump.outputs.c_semver }}" >> "$GITHUB_ENV"
+          echo "engine: v${{ needs.bump.outputs.c_semver }}"
+
+      - name: Build the per-minor native DLLs (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$RUNNER_TEMP/pgem"
+          git clone --quiet "$(git remote get-url origin)" "$RUNNER_TEMP/pgem/yeptris-ruby"
+          cd "$RUNNER_TEMP/pgem/yeptris-ruby"
+          LOCKSTEP="$(git tag -l "v${{ needs.bump.outputs.version }}" | sort -V | tail -1 || true)"
+          test -n "$LOCKSTEP" || { echo "lockstep tag not visible yet"; exit 0; }
+          git checkout --quiet "$LOCKSTEP"
+          echo "YEP_RUBYREPO=$RUNNER_TEMP/pgem/yeptris-ruby" >> "$GITHUB_ENV"
+
+      - name: Per-minor native DLL 3.3 (Windows)
+        if: runner.os == 'Windows' && (matrix.ruby-version || '3.3') != '3.3' && (matrix.ruby-version || '3.3') != '3.0'
+        uses: ruby/setup-ruby@master
+        with:
+          ruby-version: '3.3'
+          bundler-cache: false
+        continue-on-error: true
+      - name: Build native DLL 3.3
+        if: runner.os == 'Windows' && (matrix.ruby-version || '3.3') != '3.3' && (matrix.ruby-version || '3.3') != '3.0'
+        shell: bash
+        continue-on-error: true
+        run: cd "$YEP_RUBYREPO" && ruby ext/build_windows_native.rb
+      - name: Per-minor native DLL 3.4 (Windows)
+        if: runner.os == 'Windows' && (matrix.ruby-version || '3.3') != '3.4' && (matrix.ruby-version || '3.3') != '3.0'
+        uses: ruby/setup-ruby@master
+        with:
+          ruby-version: '3.4'
+          bundler-cache: false
+        continue-on-error: true
+      - name: Build native DLL 3.4
+        if: runner.os == 'Windows' && (matrix.ruby-version || '3.3') != '3.4' && (matrix.ruby-version || '3.3') != '3.0'
+        shell: bash
+        continue-on-error: true
+        run: cd "$YEP_RUBYREPO" && ruby ext/build_windows_native.rb
+      - name: Per-minor native DLL 4.0 (Windows)
+        if: runner.os == 'Windows' && (matrix.ruby-version || '3.3') != '4.0' && (matrix.ruby-version || '3.3') != '3.0'
+        uses: ruby/setup-ruby@master
+        with:
+          ruby-version: '4.0'
+          bundler-cache: false
+        continue-on-error: true
+      - name: Build native DLL 4.0
+        if: runner.os == 'Windows' && (matrix.ruby-version || '3.3') != '4.0' && (matrix.ruby-version || '3.3') != '3.0'
+        shell: bash
+        continue-on-error: true
+        run: cd "$YEP_RUBYREPO" && ruby ext/build_windows_native.rb
+
+      - uses: ruby/setup-ruby@master
+        with:
+          ruby-version: "${{ matrix.ruby-version || '3.3' }}"
+
+      - name: Build the platform gem
+        shell: bash
+        run: |
+          # RubyGems 3.6 stamps a versionless darwin platform to the
+          # LOCAL kernel at package time; 4.x packages it as declared.
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            gem update --system --no-document >/dev/null 2>&1 || gem update --system --no-document
+          fi
+          mkdir -p "$RUNNER_TEMP/pgem"
+          bash scripts/build-platform-gem.sh "${{ needs.bump.outputs.c_semver }}" \
+            "$(git remote get-url origin)" "$RUNNER_TEMP/pgem"
+
+      - name: Smoke the platform gem
+        shell: bash
+        run: |
+          test -f "$RUNNER_TEMP/pgem/gempath" && \
+            scripts/smoke-gem.sh "$(cut -d= -f2 "$RUNNER_TEMP/pgem/gempath")" \
+              "$(pwd)" || echo "no platform gem this run"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkg-${{ matrix.os }}-${{ matrix.ruby-version || 'default' }}
+          path: |
+            ${{ runner.temp }}/pgem/*.gem
+
+  build-musl:
+    needs: bump
+    if: always() && !cancelled() && !failure()
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
+    steps:
+      - name: Build the musl platform gem (Alpine container)
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/pgem"
+          docker run --rm -v "$RUNNER_TEMP/pgem:/pgem" -e V="${{ needs.bump.outputs.c_semver }}" \
+            ruby:3.4-alpine sh -c '
+            set -eux
+            apk add --no-cache build-base bash git cmake ninja
+            git clone --quiet --depth 1 --branch "v${{ needs.bump.outputs.version }}" https://github.com/leptris/yeptris-ruby /bnd
+            bash /bnd/scripts/build-platform-gem.sh "$V" https://github.com/leptris/yeptris-ruby /pgem
+          '
+
+      - name: Smoke the musl platform gem (Alpine container)
+        shell: bash
+        run: |
+          test -f "$RUNNER_TEMP/pgem/gempath" || { echo "no gem this run"; exit 0; }
+          GEM="$(cut -d= -f2 "$RUNNER_TEMP/pgem/gempath")"
+          GEM="${GEM#/pgem}"
+          docker run --rm -v "$RUNNER_TEMP/pgem:/pgem" -w /pgem ruby:3.4-alpine sh -c '
+            set -eux
+            gem install ffi --no-document
+            gem install --local --no-document "'"$GEM"'"
+            ruby -e "require %(yeptris); abort %(smoke) unless Yeptris::YAML.load(%(a: [1, 2])) == { %(a) => [1, 2] }; puts %(SMOKE PASS musl)"
+          '
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkg-musl-${{ matrix.os }}
+          path: ${{ runner.temp }}/pgem/*.gem
+
+  build-qemu:
+    # armv7 gnu+musl, ppc64le, s390x — no hosted runners. The setup
+    # string is interpolated TEXTUALLY (env-expanded metacharacters
+    # are never re-parsed: `&&` reached apt-get as a literal argument
+    # once); s390x rides ruby:3.2-bookworm (3.3+ dropped the variant).
+    needs: bump
+    if: always() && !cancelled() && !failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: arm-linux
+            image: ruby:3.4-bookworm
+            platform: linux/arm/v7
+            setup: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential git cmake ninja-build
+          - name: arm-linux-musl
+            image: ruby:3.4-alpine
+            platform: linux/arm/v7
+            setup: apk add --no-cache build-base bash git cmake ninja
+          - name: ppc64le-linux
+            image: ruby:3.4-bookworm
+            platform: linux/ppc64le
+            setup: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential git cmake ninja-build
+          # ruby 3.3+ dropped the s390x variant from the official image
+          - name: s390x-linux
+            image: ruby:3.2-bookworm
+            platform: linux/s390x
+            setup: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential git cmake ninja-build
+    steps:
+      - uses: docker/setup-qemu-action@v3
+
+      - name: Build the ${{ matrix.name }} platform gem
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/pgem-${{ matrix.name }}"
+          docker run --rm --platform "${{ matrix.platform }}" \
+            -v "$RUNNER_TEMP:/work" -w /work \
+            "${{ matrix.image }}" sh -c '
+            set -eux
+            ${{ matrix.setup }}
+            git clone --quiet --depth 1 --branch "v${{ needs.bump.outputs.version }}" https://github.com/leptris/yeptris-ruby /bnd
+            bash /bnd/scripts/build-platform-gem.sh "${{ needs.bump.outputs.c_semver }}" https://github.com/leptris/yeptris-ruby "/work/pgem-${{ matrix.name }}"
+          '
+
+      - name: Smoke the ${{ matrix.name }} platform gem (in the container)
+        shell: bash
+        run: |
+          test -f "$RUNNER_TEMP/pgem-${{ matrix.name }}/gempath" || { echo "no gem this run"; exit 0; }
+          GEM="$(cut -d= -f2 "$RUNNER_TEMP/pgem-${{ matrix.name }}/gempath")"
+          docker run --rm --platform "${{ matrix.platform }}" \
+            -v "$RUNNER_TEMP:/work" -w /work "${{ matrix.image }}" sh -c '
+            set -eux
+            if [ -f /etc/alpine-release ]; then
+              apk add --no-cache ruby-ffi >/dev/null 2>&1 || gem install ffi --no-document
+            else
+              gem install ffi --no-document
+            fi
+            gem install --local --no-document "'"$GEM"'"
+            ruby -e "require %(yeptris); abort %(smoke) unless Yeptris::YAML.load(%(a: [1, 2])) == { %(a) => [1, 2] }; puts %(SMOKE PASS ${{ matrix.name }})"
+          '
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkg-qemu-${{ matrix.name }}
+          path: ${{ runner.temp }}/pgem-${{ matrix.name }}/*.gem
+
+  publish:
+    needs: [bump, build-native, build-musl, build-qemu]
+    if: always() && !cancelled() && !failure() && needs.bump.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump.outputs.sha || github.ref }}
+
+      - uses: ruby/setup-ruby@master
+        with:
+          ruby-version: '3.3'
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pkg-*
+          path: pkg
+          merge-multiple: true
+
+      - name: Verify Ruby-source parity across platform variants
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/parity && mkdir -p /tmp/parity
+          valid=0
+          for gem in pkg/*.gem; do
+            name=$(basename "$gem" .gem)
+            # a .gem's OUTER container is a plain POSIX tar, not gzip
+            if ! tar tf "$gem" >/dev/null 2>&1; then
+              echo "::warning::$name is not a readable gem archive — skipping parity for it"
+              continue
+            fi
+            d="/tmp/parity/$name"
+            mkdir -p "$d"
+            tar xf "$gem" -C "$d" data.tar.gz
+            tar xf "$d/data.tar.gz" -C "$d"
+            find "$d/lib" -name '*.rb' -type f | sed "s|$d/||" | sort > "$d/list.txt"
+            valid=$((valid + 1))
+          done
+          if [ "$valid" -lt 2 ]; then
+            echo "::error::fewer than two valid variants to compare"
+            exit 1
+          fi
+          first=$(ls /tmp/parity | head -1)
+          ref_list="/tmp/parity/$first/list.txt"
+          ref_hashes=$(cd "/tmp/parity/$first" && xargs md5sum < list.txt | sort -k2)
+          for d in /tmp/parity/*/; do
+            name=$(basename "$d")
+            [ "$name" = "$first" ] && continue
+            diff -q "$ref_list" "$d/list.txt" >/dev/null || {
+              echo "::error::$name ships a different lib/**/*.rb file set than $first"
+              exit 1
+            }
+            hashes=$(cd "$d" && xargs md5sum < list.txt | sort -k2)
+            diff -q <(echo "$ref_hashes") <(echo "$hashes") >/dev/null || {
+              echo "::error::$name Ruby sources differ from $first (version skew)"
+              exit 1
+            }
+          done
+          echo "Ruby sources byte-identical across $(ls /tmp/parity | wc -l | tr -d ' ') variants"
+
+      - name: Configure RubyGems credentials (Trusted Publishing / OIDC)
+        uses: rubygems/configure-rubygems-credentials@dc5a8d8553e6ee01fc26761a49e99e733d17954a # v2.1.0
+
+      - name: Publish to rubygems.org
+        run: |
+          ls -la pkg/
+          for gem in pkg/*.gem; do
+            echo "Pushing $gem..."
+            if ! output=$(gem push -V "$gem" 2>&1); then
+              case "$output" in
+                *"Repushing of gem versions is not allowed"*|"already pushed"*|"is taken"*)
+                  echo "::warning::$gem already published; skipping"
+                  ;;
+                *)
+                  echo "$output"
+                  exit 1
+                  ;;
+              esac
+            else
+              echo "$output"
+            fi
+          done
