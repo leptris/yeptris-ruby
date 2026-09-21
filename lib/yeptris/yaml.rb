@@ -73,7 +73,7 @@ module Yeptris
     # Parses without materializing: the first document's root Node.
     def parse(yaml, schema: :core_12)
       doc = Document.parse(yaml, schema: schema)
-      return nil if doc.document_count.zero?
+      return nil if doc.nil? || doc.document_count.zero?
 
       doc.root(0)
     end

@@ -276,6 +276,31 @@ class Yeptris::Node
     alive { Yeptris::FFI.yeptris_node_id(@c_ptr) }
   end
 
+  # The marshal fast path (TODO.restructure/21; #178): one C call
+  # turns this subtree into Marshal 4.8 bytes — Marshal.load builds
+  # the Ruby objects in C, no per-node FFI. nil when the document
+  # carries constructs the format cannot express (merge keys,
+  # timestamps, tagged revivals): the caller walks instead. Raises
+  # ParseError on engine errors (not on the bail).
+  def marshal_fast
+    return nil unless Yeptris::FFI::MARSHAL
+
+    out_p = ::FFI::MemoryPointer.new(:pointer)
+    olen_p = ::FFI::MemoryPointer.new(:size_t)
+    st = alive { Yeptris::FFI.yeptris_marshal_node(@c_ptr, out_p, olen_p) }
+    if st == Yeptris::FFI::ERROR_UNSUPPORTED
+      nil
+    elsif st != Yeptris::FFI::OK
+      raise Yeptris::ParseError, Yeptris::FFI.last_error_message
+    else
+      bytes = out_p.read_pointer.read_bytes(olen_p.read_uint64)
+      bytes.force_encoding(Encoding::ASCII_8BIT)
+      ::Marshal.load(bytes)
+    end
+  ensure
+    Yeptris::FFI.yeptris_marshal_free(out_p.read_pointer) if out_p
+  end
+
   def to_ruby(memo = nil)
     # readonly documents memoize per node: a second materialization
     # returns the SAME object (the readonly cache is the ground truth
@@ -293,25 +318,7 @@ class Yeptris::Node
     # Falls back to the per-node FFI walk on constructs the format
     # cannot express (merge keys, timestamps) and on older builds.
     if Yeptris::FFI::MARSHAL && memo.nil?
-      result =
-        begin
-          out_p = ::FFI::MemoryPointer.new(:pointer)
-          olen_p = ::FFI::MemoryPointer.new(:size_t)
-          st = Yeptris::FFI.yeptris_marshal_node(@c_ptr, out_p, olen_p)
-          if st == Yeptris::FFI::ERROR_UNSUPPORTED
-            nil
-          elsif st != Yeptris::FFI::OK
-            raise Yeptris::ParseError, Yeptris::FFI.last_error_message
-          else
-            buf = out_p.read_pointer
-            len = olen_p.read_uint64
-            bytes = buf.read_bytes(len)
-            bytes.force_encoding(Encoding::ASCII_8BIT)
-            ::Marshal.load(bytes)
-          end
-        ensure
-          Yeptris::FFI.yeptris_marshal_free(out_p.read_pointer) if out_p
-        end
+      result = marshal_fast
       unless result.nil?
         @document.readonly_memo[node_id] = result if @document.readonly?
         return result

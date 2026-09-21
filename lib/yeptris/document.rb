@@ -26,18 +26,23 @@ class Yeptris::Document
   def self.parse(yaml, schema: :core_12, max_depth: 0)
     yaml = Yeptris.read_input(yaml)
     yaml = yaml.to_s
+    status = ::FFI::MemoryPointer.new(:int)
     doc =
       if schema == :core_12 && max_depth.zero?
-        Yeptris::FFI.yeptris_parse(yaml, yaml.bytesize, nil)
+        Yeptris::FFI.yeptris_parse(yaml, yaml.bytesize, status)
       else
         opts = Yeptris::FFI::ParseOptions.new
         opts[:schema] = schema == :compat_11 ? Yeptris::FFI::SCHEMA_11_COMPAT : Yeptris::FFI::SCHEMA_12_CORE
         opts[:max_depth] = max_depth
-        Yeptris::FFI.yeptris_parse_ex(yaml, yaml.bytesize, opts, nil)
+        Yeptris::FFI.yeptris_parse_ex(yaml, yaml.bytesize, opts, status)
       end
     if doc.null?
-      # the status out-param is skipped: the thread-local error
-      # channel carries the failure detail (measurable on small docs)
+      # NULL + OK is the legal empty stream (no documents): nil, like
+      # stdlib. The status out-param is the discriminator — the TLS
+      # error message cannot serve (a stale error from an earlier
+      # parse persists on the thread).
+      return nil if status.read_int.zero?
+
       raise Yeptris::ParseError,
             "parse failed: #{Yeptris::FFI.last_error_message}"
     end
