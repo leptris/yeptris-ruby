@@ -299,10 +299,11 @@ module Yeptris
         (0...doc.document_count).each do |i|
           stream.children << Nodes::Builder.document_stream_child(doc, i)
         end
+        # ownership: the DOCUMENT wrapper is the sole owner — its own
+        # finalizer (pointer-only closure) frees the C memory; the
+        # stream merely references it. A tree-side finalizer closing
+        # over the wrapper raced the wrapper's sweep (#182's abort).
         stream.owner = doc
-        ObjectSpace.define_finalizer(
-          stream, proc { doc.free unless doc.freed? }
-        )
         stream
       rescue Yeptris::ParseError => e
         raise SyntaxError.from_parse_error(e)
@@ -447,12 +448,13 @@ module Yeptris
           @tags = tags
         end
 
-        # @api private — transfer of C ownership to this tree
+        # @api private — attach the document: the tree REFERENCES it
+        # (keeping the C memory alive while the tree is reachable);
+        # the wrapper's own finalizer is the sole freer (#182: a
+        # tree-side finalizer closing over the wrapper raced the
+        # wrapper's sweep — SIGABRT under document churn)
         def own(yeptris_doc)
           @owner = yeptris_doc
-          ObjectSpace.define_finalizer(
-            self, proc { yeptris_doc.free unless yeptris_doc.freed? }
-          )
           self
         end
 
