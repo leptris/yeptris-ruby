@@ -150,7 +150,17 @@ class Yeptris::Node
     return enum_for(:each) unless block_given?
     raise Yeptris::Error, "#each is for sequences" unless sequence?
 
-    (0...seq_count).each { |i| yield seq_at(i) }
+    if Yeptris::FFI::CHILDREN_DRAIN
+      # one bulk walk (#168): the per-index seq_at loop paid i sibling
+      # hops per element — n^2/2 over an 80k-row sequence
+      n = alive { Yeptris::FFI.yeptris_node_seq_count(@c_ptr) }
+      buf = ::FFI::MemoryPointer.new(:pointer, n)
+      alive { Yeptris::FFI.yeptris_node_children(@c_ptr, buf, n) }
+      step = buf.type_size
+      n.times { |i| yield @document.wrap_node(buf.get_pointer(i * step)) }
+    else
+      (0...seq_count).each { |i| yield seq_at(i) }
+    end
   end
 
   # ---- mapping access ----
@@ -177,13 +187,25 @@ class Yeptris::Node
     return enum_for(:each_pair) unless block_given?
     raise Yeptris::Error, "#each_pair is for mappings" unless mapping?
 
-    k = ::FFI::MemoryPointer.new(:pointer)
-    v = ::FFI::MemoryPointer.new(:pointer)
-    (0...map_count).each do |i|
-      rc = alive { Yeptris::FFI.yeptris_node_map_at(@c_ptr, i, k, v) }
-      next unless rc.zero?
+    if Yeptris::FFI::CHILDREN_DRAIN
+      # key,value interleaved in one walk — the same #168 cure
+      pairs = alive { Yeptris::FFI.yeptris_node_map_count(@c_ptr) }
+      buf = ::FFI::MemoryPointer.new(:pointer, pairs * 2)
+      alive { Yeptris::FFI.yeptris_node_children(@c_ptr, buf, pairs * 2) }
+      step = buf.type_size
+      pairs.times do |p|
+        yield @document.wrap_node(buf.get_pointer((2 * p) * step)),
+              @document.wrap_node(buf.get_pointer((2 * p + 1) * step))
+      end
+    else
+      k = ::FFI::MemoryPointer.new(:pointer)
+      v = ::FFI::MemoryPointer.new(:pointer)
+      (0...map_count).each do |i|
+        rc = alive { Yeptris::FFI.yeptris_node_map_at(@c_ptr, i, k, v) }
+        next unless rc.zero?
 
-      yield @document.wrap_node(k.read_pointer), @document.wrap_node(v.read_pointer)
+        yield @document.wrap_node(k.read_pointer), @document.wrap_node(v.read_pointer)
+      end
     end
   end
 
