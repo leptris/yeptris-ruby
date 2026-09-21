@@ -291,7 +291,15 @@ module Yeptris
         raise SyntaxError.from_parse_error(e)
       end
 
-      def parse_stream(yaml)
+      def parse_stream(yaml, &block)
+        # stdlib yields each document to a block if one was given (and
+        # the stream it returns holds the same children either way).
+        # #182: the wrapper is the sole owner of the C memory — the
+        # stream merely REFERENCES it; the wrapper's own finalizer
+        # handles GC-free. (The block-yielding form is tracked under
+        # #179: the current implementation materializes eagerly; the
+        # block is only honored as a no-op convenience.)
+        _ = block # reserved for the future yielding form (#179)
         doc = Yeptris::Document.parse(yaml, schema: :compat_11)
         return nil if doc.nil? || doc.document_count.zero?
 
@@ -308,6 +316,8 @@ module Yeptris
       rescue Yeptris::ParseError => e
         raise SyntaxError.from_parse_error(e)
       ensure
+        # the returned stream OWNS the doc's lifetime (its free delegates
+        # to the owner); only free here when the stream wasn't built
         doc&.free if doc && !stream
       end
 
@@ -522,8 +532,12 @@ module Yeptris
         # stream owns the yeptris document)
         def document_stream_child(doc, index)
           root = doc.root(index)
-          d = Document.new
-          d.handle = root&.document
+          # #182's root cause: three per-stream Document wrappers all
+          # capture the same c_ptr in their finalizers → three frees.
+          # The stream-children WRAPPER owns nothing (the owner wrapper
+          # is the real Document; this one just references it). Build
+          # a non-owning wrapper with no finalizer.
+          d = Document.send(:new, root&.document, false)
           d.children << node(root) if root
           d
         end
