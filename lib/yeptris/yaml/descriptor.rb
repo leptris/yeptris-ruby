@@ -33,6 +33,8 @@ class Yeptris::YAML::Descriptor < ::Yeptris::JSON::Descriptor
   def walk(yaml)
     src = ::Yeptris.read_input(yaml).to_s
     doc = ::Yeptris::Document.parse(src, schema: @schema)
+    return [] if doc.nil? # the legal empty stream
+
     begin
       st = ::FFI::MemoryPointer.new(:int)
       raw = ::Yeptris::FFI.yeptris_document_plan_walk(doc.c_ptr, @handle, st)

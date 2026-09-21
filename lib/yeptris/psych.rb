@@ -143,6 +143,31 @@ module Yeptris
       # !ruby/set, encode_with/init_with, alias identity. Plain-data
       # loads should use load/safe_load (the Materializer fast path).
       def unsafe_load(yaml, **)
+        # #178: the marshal fast path. Nodes::Builder's tree is per-node
+        # FFI (kind/tag/anchor/value + a walk per container) — the whole
+        # 11 MB relaton index paid ~9.6 s there. When the document is
+        # plain data (no timestamps/merge keys/tagged revivals), ONE C
+        # call materializes the tree as Marshal bytes and Marshal.load
+        # builds the objects in C (~1 s end to end). Construct-heavy
+        # documents keep the full revival walk below, byte for byte.
+        if Yeptris::FFI::MARSHAL && ::Yeptris::Psych.domain_types.empty?
+          begin
+            doc = ::Yeptris::Document.parse(yaml, schema: :compat_11)
+            return nil if doc.nil? || doc.document_count.zero?
+
+            root = doc.root(0)
+            fast = root&.marshal_fast
+            unless fast.nil?
+              doc.free
+              return fast
+            end
+            tree = Nodes::Builder.document(doc) # ownership: the tree frees
+            return Visitors::ToRuby.visit(tree.children.first)
+          rescue ::Yeptris::ParseError => e
+            doc&.free unless doc&.freed?
+            raise SyntaxError.from_parse_error(e)
+          end
+        end
         tree = parse(yaml)
         return nil if tree.nil?
 
@@ -151,6 +176,8 @@ module Yeptris
 
       def safe_load(yaml, permitted_classes: [::Date, ::Time], aliases: false, **)
         doc = Yeptris::Document.parse(yaml, schema: :compat_11)
+        return nil if doc.nil? # the legal empty stream
+
         begin
           force_utf8_scalars(walk_safe(doc.root(0), permitted_classes, aliases))
         ensure
@@ -230,6 +257,8 @@ module Yeptris
         # children share one C document, so their handles would all
         # resolve to the first document's tree
         doc = Yeptris::Document.parse(yaml, schema: :compat_11)
+        return nil if doc.nil? # the legal empty stream
+
         begin
           (0...doc.document_count).map { |i| doc.root(i).to_ruby }
         ensure
@@ -240,7 +269,7 @@ module Yeptris
       # The first document's node tree (no Ruby materialization).
       def parse(yaml)
         doc = Yeptris::Document.parse(yaml, schema: :compat_11)
-        return nil if doc.document_count.zero?
+        return nil if doc.nil? || doc.document_count.zero?
 
         Nodes::Builder.document(doc)
       rescue Yeptris::ParseError => e
@@ -249,7 +278,7 @@ module Yeptris
 
       def parse_stream(yaml)
         doc = Yeptris::Document.parse(yaml, schema: :compat_11)
-        return nil if doc.document_count.zero?
+        return nil if doc.nil? || doc.document_count.zero?
 
         stream = Nodes::Stream.new
         (0...doc.document_count).each do |i|

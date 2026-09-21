@@ -418,7 +418,17 @@ module Yeptris
         def hash_into(h, node)
           anchors[node.anchor] = h if node.anchor
           node.children.each_slice(2) do |k, v|
-            h[visit(k)] = visit(v)
+            key = visit(k)
+            val = visit(v)
+            if key == "<<" # stdlib visit_hash: the merge key
+              case val
+              when ::Hash then h.merge!(val)
+              when ::Array then val.reverse_each { |x| h.merge!(x) }
+              else h[key] = val
+              end
+            else
+              h[key] = val
+            end
           end
           h
         end
