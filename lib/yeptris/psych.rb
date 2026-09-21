@@ -91,6 +91,9 @@ module Yeptris
     # object instance exists.
     autoload :Encodable, "yeptris/psych/encodable"
     class Error < StandardError; end
+
+    # stdlib psych 5: a *foo with no matching &foo anchor
+    class AnchorNotDefined < Error; end
     # Psych's exact interface (issue #32): same constructor arity,
     # same reader set (file/line/column/offset/problem/context), same
     # message shape — drop-in consumers' rescues and constructors
@@ -165,7 +168,7 @@ module Yeptris
             return Visitors::ToRuby.visit(tree.children.first)
           rescue ::Yeptris::ParseError => e
             doc&.free unless doc&.freed?
-            raise SyntaxError.from_parse_error(e)
+            translate_parse_error(e)
           end
         end
         tree = parse(yaml)
@@ -175,13 +178,16 @@ module Yeptris
       end
 
       def safe_load(yaml, permitted_classes: [::Date, ::Time], aliases: false, **)
-        doc = Yeptris::Document.parse(yaml, schema: :compat_11)
-        return nil if doc.nil? # the legal empty stream
-
         begin
+          doc = Yeptris::Document.parse(yaml, schema: :compat_11)
+          return nil if doc.nil? # the legal empty stream
+
           force_utf8_scalars(walk_safe(doc.root(0), permitted_classes, aliases))
+        rescue ::Yeptris::ParseError => e
+          doc&.free unless doc&.freed?
+          translate_parse_error(e)
         ensure
-          doc.free
+          doc&.free
         end
       end
 
@@ -267,6 +273,15 @@ module Yeptris
       end
 
       # The first document's node tree (no Ruby materialization).
+      def translate_parse_error(e)
+        # yeptris rejects *foo without &foo at PARSE time (stdlib
+        # raises at visit) — surface it as stdlib's class so
+        # consumers' rescues keep working
+        raise AnchorNotDefined, e.message if e.message.include?("undefined anchor")
+
+        raise SyntaxError.from_parse_error(e)
+      end
+
       def parse(yaml)
         doc = Yeptris::Document.parse(yaml, schema: :compat_11)
         return nil if doc.nil? || doc.document_count.zero?

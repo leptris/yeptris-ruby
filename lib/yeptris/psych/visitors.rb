@@ -188,6 +188,13 @@ module Yeptris
               key_node = @tree.new_scalar("", :single_quoted)
               key_node.set_tag("!")
               m.map_add_node(key_node, visit(v))
+            elsif k.is_a?(::String) && k == "<<"
+              # stdlib yaml_tree: a literal chevron key carries the
+              # explicit !!str tag (single-quoted) so it does not
+              # re-load as a merge
+              key_node = @tree.new_scalar("<<", :single_quoted)
+              key_node.set_tag("!!str")
+              m.map_add_node(key_node, visit(v))
             else
               m.map_add(key_text(k), visit(v))
             end
@@ -415,16 +422,34 @@ module Yeptris
           end
         end
 
+        # stdlib visit_hash's merge branch, verbatim in structure: the
+        # key's SHAPE decides (an explicit !!str '<<' is a literal key,
+        # not a merge), the VALUE's node kind picks the arm, and every
+        # merge is TypeError-guarded (a bad element keeps the whole
+        # '<<' pair literal — merges are all-or-nothing).
         def hash_into(h, node)
           anchors[node.anchor] = h if node.anchor
           node.children.each_slice(2) do |k, v|
             key = visit(k)
             val = visit(v)
-            if key == "<<" # stdlib visit_hash: the merge key
-              case val
-              when ::Hash then h.merge!(val)
-              when ::Array then val.reverse_each { |x| h.merge!(x) }
-              else h[key] = val
+            if key == "<<" && k.tag != "tag:yaml.org,2002:str"
+              case v
+              when ::Yeptris::Psych::Nodes::Alias, ::Yeptris::Psych::Nodes::Mapping
+                begin
+                  h.merge!(val)
+                rescue ::TypeError
+                  h[key] = val
+                end
+              when ::Yeptris::Psych::Nodes::Sequence
+                begin
+                  merged = {}
+                  val.reverse_each { |value| merged.merge!(value) }
+                  h.merge!(merged)
+                rescue ::TypeError
+                  h[key] = val
+                end
+              else
+                h[key] = val
               end
             else
               h[key] = val
