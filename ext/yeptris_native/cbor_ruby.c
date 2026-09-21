@@ -17,6 +17,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+static rb_encoding* cr_utf8_enc;
+
+/* Map keys repeat across records in CBOR corpora; interning shares one
+ * VALUE per distinct key (the json_ruby.c on_key pattern, #157). */
+static VALUE cr_key_str(const char* p, size_t len) {
+    return rb_enc_interned_str(p, (long)len, cr_utf8_enc);
+}
+
 #include "dom/dom.h"
 #include "doc.h" /* the public YeptrisDocument wrapper: ->dom */
 #include <yeptris/cbor.h>
@@ -91,8 +99,17 @@ static VALUE cr_walk(const yep_dom* d, uint32_t id) {
         VALUE h = HASH_NEW_CAPA(pairs);
         uint32_t c = n->first_child;
         for (long i = 0; i < pairs && c != UINT32_MAX; i++) {
-            VALUE k = cr_walk(d, c);
-            c = d->nodes[c].next_sibling;
+            VALUE k;
+            const yep_dnode* kn = &d->nodes[c];
+            if (kn->kind == YEP_DOM_SCALAR && kn->tag_id == YEPTRIS_TAG_STR) {
+                uint32_t klen = 0;
+                const char* kp = cr_view(d, kn->value, &klen);
+                k = cr_key_str(kp, klen);
+                c = kn->next_sibling;
+            } else {
+                k = cr_walk(d, c);
+                c = d->nodes[c].next_sibling;
+            }
             VALUE v = (c != UINT32_MAX) ? cr_walk(d, c) : Qnil;
             if (c != UINT32_MAX) {
                 c = d->nodes[c].next_sibling;
@@ -107,6 +124,9 @@ static VALUE cr_walk(const yep_dom* d, uint32_t id) {
 }
 
 VALUE yep_rb_cbor_load(const char* p, size_t len, int strict) {
+    if (cr_utf8_enc == NULL) {
+        cr_utf8_enc = rb_utf8_encoding();
+    }
     YeptrisStatus st = YEPTRIS_OK;
     /* the DOM borrows the input buffer zero-copy; the walk ALLOCATES,
      * and a GC compaction mid-walk moves the caller's String — the
