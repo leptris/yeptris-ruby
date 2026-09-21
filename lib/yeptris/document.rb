@@ -8,6 +8,11 @@ class Yeptris::Document
   # explicit free path and the finalizer both flip the same flag.
   Freed = Struct.new(:state) # :alive | :freed
 
+  # The raw C handle — the Yeptris::Node wrappers cache by its
+  # address; stream-children wrappers (Document.without_finalizer)
+  # carry it without registering a finalizer (#182).
+  attr_reader :c_ptr
+
   # The schema this document was parsed with (a parse property).
   attr_reader :parse_schema
 
@@ -78,6 +83,18 @@ class Yeptris::Document
   # the core_12 default (yeptris_parse's default).
   def self.wrap_schema(c_ptr, schema)
     new(c_ptr, Freed.new(:alive), schema)
+  end
+
+  # #182: the stream-children wrapper owns NOTHING (the parent
+  # Document wrapper is the sole freer of the C memory). A plain
+  # Document.new would register a finalizer on a c_ptr we don't own;
+  # a parse_stream on a multi-doc stream would free the same pointer
+  # three times at GC → SIGABRT. This factory builds the wrapper
+  # WITHOUT a finalizer; the wrapper's lifetime follows the owner.
+  def self.without_finalizer(c_ptr)
+    doc = new(c_ptr)
+    ObjectSpace.undefine_finalizer(doc)
+    doc
   end
 
   def ensure_alive!
