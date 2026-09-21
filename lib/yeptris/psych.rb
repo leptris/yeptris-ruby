@@ -22,6 +22,9 @@ require "yeptris"
 # document without materializing.
 module Yeptris
   module Psych
+    autoload :ClassLoader, "yeptris/psych/class_loader"
+    autoload :ScalarScanner, "yeptris/psych/scalar_scanner"
+
     # The tag registries (Psych's class-level API, #95 bug 4):
     # load_tags maps a serialized tag to the Class that revives it;
     # dump_tags overrides the emitted tag for a Class. Consulted by
@@ -258,18 +261,28 @@ module Yeptris
         ::Yeptris::Psych.dump(obj, io, options)
       end
 
-      def load_stream(yaml, **kwargs)
+      def load_stream(yaml, **kwargs, &block)
         # materialize each document's root directly — the stream
         # children share one C document, so their handles would all
-        # resolve to the first document's tree
+        # resolve to the first document's tree. stdlib's block form
+        # yields each loaded document's object (#179 round 4).
         doc = Yeptris::Document.parse(yaml, schema: :compat_11)
         return nil if doc.nil? # the legal empty stream
 
         begin
-          (0...doc.document_count).map { |i| doc.root(i).to_ruby }
+          docs = (0...doc.document_count).map { |i| doc.root(i).to_ruby }
         ensure
           doc.free
         end
+        docs.each { |d| block.call(d) } if block
+        docs
+      end
+
+      # safe_load_stream: stdlib's surface — the stream form of
+      # safe_load. Our load_stream is already safe-by-default
+      # (Psych 5 semantics), so this is the yielding wrapper.
+      def safe_load_stream(yaml, **kwargs, &block)
+        load_stream(yaml, **kwargs, &block)
       end
 
       # The first document's node tree (no Ruby materialization).
@@ -299,13 +312,14 @@ module Yeptris
         # handles GC-free. (The block-yielding form is tracked under
         # #179: the current implementation materializes eagerly; the
         # block is only honored as a no-op convenience.)
-        _ = block # reserved for the future yielding form (#179)
         doc = Yeptris::Document.parse(yaml, schema: :compat_11)
         return nil if doc.nil? || doc.document_count.zero?
 
         stream = Nodes::Stream.new
         (0...doc.document_count).each do |i|
-          stream.children << Nodes::Builder.document_stream_child(doc, i)
+          child = Nodes::Builder.document_stream_child(doc, i)
+          stream.children << child
+          block.call(child) if block # stdlib's yielding form (#179 round 4)
         end
         # ownership: the DOCUMENT wrapper is the sole owner — its own
         # finalizer (pointer-only closure) frees the C memory; the
@@ -450,6 +464,10 @@ module Yeptris
       # tree stay valid while the tree is reachable; a GC finalizer
       # releases the C memory when it is not.
       class Document < Node
+          # The document's root as a Ruby object (the stream-yield face).
+          def to_ruby
+            children.first&.to_ruby
+          end
         attr_reader :version, :tags
 
         def initialize(version = [], tags = {})

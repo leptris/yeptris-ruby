@@ -40,8 +40,34 @@ RSpec.describe "Psych stream (the stdlib port)" do
   xit "test_predicate_alias (alias? needs an anchored node helper — #179)"
   xit "test_parse_partial (libyaml tolerates --- ` as empty; ours raises — #179)"
   xit "test_load_partial"
-  xit "test_parse_stream_yields_documents (block form — #179)"
-  xit "test_parse_stream_break (block form — #179)"
-  xit "test_load_stream_yields_documents (block form — #179)"
-  xit "test_safe_load_stream_yields_documents"
+  it "test_parse_stream_yields_documents (block form — #179 round 4)" do
+    yielded = []
+    rb = ::Psych.parse_stream("---\nfoo\n---\nbar\n") { |doc| yielded << doc }
+    expect(yielded.size).to eq(2)
+    expect(yielded).to all(be_a(::Psych::Nodes::Document))
+    expect(rb.children.size).to eq(2)
+  end
+
+  it "test_parse_stream_break (block form — #179 round 4)" do
+    yielded = []
+    ::Psych.parse_stream("---\nfoo\n---\nbar\n") do |doc|
+      yielded << doc
+      break
+    end
+    expect(yielded.size).to eq(1)
+  end
+
+  it "test_load_stream_yields_documents (block form — #179 round 4)" do
+    yielded = []
+    docs = ::Psych.load_stream("---\nfoo\n---\nbar\n") { |ruby| yielded << ruby }
+    expect(docs).to eq(%w[foo bar])
+    expect(yielded).to eq(%w[foo bar])
+  end
+
+  it "test_safe_load_stream_yields_documents" do
+    yielded = []
+    docs = ::Psych.safe_load_stream("---\nfoo\n---\n[1, 2]\n") { |ruby| yielded << ruby }
+    expect(docs).to eq(["foo", [1, 2]])
+    expect(yielded).to eq(["foo", [1, 2]])
+  end
 end
