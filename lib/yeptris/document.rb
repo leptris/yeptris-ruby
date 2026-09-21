@@ -20,7 +20,7 @@ class Yeptris::Document
     # always yields the same Ruby object (identity for aliases/eql?),
     # cleared at free — no stale entries, no GC-race weak maps.
     @wrapper_cache = {}
-    ObjectSpace.define_finalizer(self, self.class.finalize(c_ptr, freed)) unless c_ptr.null?
+    ObjectSpace.define_finalizer(self, self.class.finalize(c_ptr)) unless c_ptr.null?
   end
 
   def self.parse(yaml, schema: :core_12, max_depth: 0)
@@ -88,6 +88,9 @@ class Yeptris::Document
     return if @freed.state == :freed
 
     @freed.state = :freed
+    # stop the GC finalizer BEFORE the C free — it captures the same
+    # pointer, and its firing after this free is the double free
+    ObjectSpace.undefine_finalizer(self)
     @wrapper_cache.clear
     Yeptris::FFI.yeptris_document_free(@c_ptr)
   end
@@ -221,12 +224,15 @@ class Yeptris::Document
     self
   end
 
-  # GC safety net: an explicit #free already ran is fine; a miss here
-  # frees C memory that would otherwise leak.
-  def self.finalize(c_ptr, freed)
-    proc do
-      Yeptris::FFI.yeptris_document_free(c_ptr) if freed.state == :alive
-      freed.state = :freed
-    end
+  # GC safety net (#182): the proc captures ONLY the raw pointer — no
+  # Ruby objects, no wrapper, no freed-flag struct. A finalizer that
+  # closes over the owning wrapper races that wrapper's own sweep
+  # (the classic use-after-free: freed?/free against half-collected
+  # ivars, then a garbage C pointer into yeptris_document_free →
+  # SIGABRT). Explicit #free undefines this finalizer BEFORE the C
+  # free, so the double free cannot happen; finalizers run on the
+  # main thread, so there is no cross-thread window.
+  def self.finalize(c_ptr)
+    proc { Yeptris::FFI.yeptris_document_free(c_ptr) }
   end
 end
