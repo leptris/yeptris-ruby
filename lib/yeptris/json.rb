@@ -119,7 +119,7 @@ module Yeptris
       end
     end
 
-    def walk_tape(src, tape)
+    def walk_tape(src, tape, strict_dup = STRICT_DUPLICATE_KEYS)
       n = tape[:count]
       kinds = tape[:kinds].read_bytes(n).unpack("C*")
       offs = tape[:offs].read_bytes(n * 4).unpack("V*")
@@ -139,7 +139,7 @@ module Yeptris
 
       docs = [nil] # record 0 (DOC) pre-consumed — the root's slot
       stack = []
-      key_sets = STRICT_DUPLICATE_KEYS ? [{}] : nil
+      key_sets = strict_dup ? [{}] : nil
       pending_key = nil
       i = 1
       while i < n
@@ -152,8 +152,12 @@ module Yeptris
           place(docs, stack, pending_key) { {} }
           pending_key = nil
         when T_CLOSE
+          # Key frames are pushed per MAP_OPEN — an ARRAY close must
+          # not pop the enclosing map's frame (issue found by ea's CI:
+          # {"a":[1],"b":[2],"c":[3]} exhausted the frames and the next
+          # map key hit key_sets.last.key? on nil under strict mode).
+          key_sets&.pop if stack.last.is_a?(Hash)
           stack.pop
-          key_sets&.pop
         when T_STR
           # empty-string literals are frozen+shared since Ruby 3.4
           # (and `+""` binds after the method chain anyway), so the
@@ -256,8 +260,8 @@ module Yeptris
           place(docs, stack, pending_key) { {} }
           pending_key = nil
         when ValueML::CLOSE
+          key_sets&.pop if stack.last.is_a?(Hash)
           stack.pop
-          key_sets&.pop
         when ValueML::V_STR
           text = arena.byteslice(offs[i], lens[i])
           if ikeys[i] == 1 && !stack.empty? && stack.last.is_a?(Hash)

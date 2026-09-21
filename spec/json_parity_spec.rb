@@ -125,6 +125,60 @@ RSpec.describe "Yeptris::JSON parity with JSON.parse" do
     end
   end
 
+  describe "duplicate-key frames survive array closes" do
+    # Key frames were pushed per MAP_OPEN but popped on EVERY close:
+    # array closes stole the enclosing map's frame, and array-valued
+    # keys exhausted the stack — the next map key then crashed on
+    # key_sets.last.key? (found by ea's CI under a json >= 3
+    # resolution; json < 3 leaves key_sets nil and never trips it).
+    CRASHERS = [
+      %({"a":[1],"b":[2],"c":[3]}),
+      %({"k":[{"n":1}],"l":{"m":[2]},"n":[3]}),
+      %({"metadata":{"title":"x"},"packages":[{"id":"p1","subs":[]},{"id":"p2"}],"rels":[{"id":"r1"}]}),
+    ].freeze
+
+    it "equals JSON.parse on the frame-exhausting shapes" do
+      CRASHERS.each do |json|
+        expect(Yeptris::JSON.load(json)).to eq(JSON.parse(json)), json
+      end
+    end
+
+    it "walk_tape keeps the frames with strict forced on" do
+      require "yeptris/ffi"
+      CRASHERS.each do |json|
+        tape = ::Yeptris::FFI::JsonTape.new
+        rc = ::Yeptris::FFI.yeptris_parse_json_tape(json, json.bytesize, tape)
+        expect(rc).to eq(::Yeptris::FFI::OK)
+        begin
+          expect(Yeptris::JSON.walk_tape(json, tape, true)).to eq(JSON.parse(json))
+        ensure
+          ::Yeptris::FFI.yeptris_tape_free(tape)
+        end
+      end
+    end
+
+    it "walk_strict keeps the frames with strict forced on" do
+      require "yeptris/ffi"
+      CRASHERS.each do |json|
+        gate = ::Yeptris::Document.parse_json(json)
+        begin
+          cols = ::Yeptris::FFI::ValueColumns.new
+          st = ::Yeptris::FFI.yeptris_value_drain_columns(
+            json, json.bytesize, ::Yeptris::FFI::SCHEMA_12_CORE, cols
+          )
+          expect(st).to eq(::Yeptris::FFI::OK)
+          begin
+            expect(Yeptris::JSON.walk_strict(cols, true)).to eq(JSON.parse(json))
+          ensure
+            ::Yeptris::FFI.yeptris_value_free_columns(cols)
+          end
+        ensure
+          gate.free
+        end
+      end
+    end
+  end
+
   describe "the YAML surface keeps the Psych contract (default-safety)" do
     it "JSON-shaped YAML with a trailing comma parses like Psych" do
       expect(Yeptris::YAML.load('{"a": [1,]}')).to eq({ "a" => [1] })
