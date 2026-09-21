@@ -66,6 +66,83 @@ module Yeptris
       end
     end
 
+    # #184 (lutaml-model KV path): zip Schema columns into record
+    # hashes ready for Serializable.instantiate. Mapping root → one
+    # hash; sequence-of-mappings → one hash per element; nested
+    # mappings → nested hashes. Returns Array<Hash> always. when_attribute
+    # / polymorphic stay out of scope (interpretive fallback).
+    def load_records(source, schema: :core_12, desc:, capacity: 64)
+      cols = load(source, schema: schema, desc: desc, capacity: capacity)
+      zip_records(desc, cols)
+    end
+
+    def zip_records(desc, cols)
+      root = desc[0] || {}
+      case root[:kind]
+      when :sequence
+        child_start = root[:child_index] || 1
+        child_count = root[:child_count] || 0
+        return [] if child_count.zero?
+
+        child = desc[child_start]
+        if child && child[:kind] == :mapping
+          field_start = child[:child_index] || (child_start + 1)
+          field_count = child[:child_count] || 0
+          fields = desc[field_start, field_count] || []
+          field_cols = cols[field_start, field_count] || []
+          nrows = field_cols.map(&:length).max || 0
+          Array.new(nrows) do |r|
+            h = {}
+            fields.each_with_index do |f, i|
+              next unless f[:wire_name]
+              col = field_cols[i] || []
+              h[f[:wire_name].to_sym] = materialize_field(f, desc, cols, col[r])
+            end
+            h
+          end
+        else
+          (cols[child_start] || []).map { |v| { value: v } }
+        end
+      when :mapping
+        field_start = root[:child_index] || 1
+        field_count = root[:child_count] || 0
+        fields = desc[field_start, field_count] || []
+        field_cols = cols[field_start, field_count] || []
+        h = {}
+        fields.each_with_index do |f, i|
+          next unless f[:wire_name]
+          col = field_cols[i] || []
+          h[f[:wire_name].to_sym] = materialize_field(f, desc, cols, col[0])
+        end
+        [h]
+      else
+        [{ value: cols[0]&.first }]
+      end
+    end
+    private_class_method :zip_records
+
+    def materialize_field(field, desc, cols, cell)
+      case field[:kind]
+      when :mapping
+        start = field[:child_index] || 0
+        count = field[:child_count] || 0
+        return nil if count.zero? || cell.nil?
+
+        nested = {}
+        desc[start, count]&.each_with_index do |nf, i|
+          next unless nf[:wire_name]
+          ncol = cols[start + i] || []
+          nested[nf[:wire_name].to_sym] = ncol.is_a?(Array) ? (ncol[0] rescue cell) : cell
+        end
+        nested
+      when :sequence
+        cell.is_a?(Array) ? cell : Array(cell)
+      else
+        cell
+      end
+    end
+    private_class_method :materialize_field
+
     def compile(desc)
       desc.map do |n|
         { kind: KIND.fetch(n.fetch(:kind)),
