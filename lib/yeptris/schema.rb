@@ -96,6 +96,13 @@ module Yeptris
             fields.each_with_index do |f, i|
               next unless f[:wire_name]
               col = field_cols[i] || []
+              # ABSENT keys are OMITTED, not nil-filled (lutaml-model's
+              # load-bearing edge: absent seeds defaults +
+              # using_default?; explicit nil is a present value with
+              # different render semantics). The C columns fill in
+              # document order — col.length > r means present.
+              next if col.length <= r
+
               h[f[:wire_name].to_sym] = materialize_field(f, desc, cols, col[r])
             end
             h
@@ -112,6 +119,8 @@ module Yeptris
         fields.each_with_index do |f, i|
           next unless f[:wire_name]
           col = field_cols[i] || []
+          next if col.empty? # absent: omitted, not nil-filled (#184)
+
           h[f[:wire_name].to_sym] = materialize_field(f, desc, cols, col[0])
         end
         [h]
