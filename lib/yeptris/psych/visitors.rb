@@ -82,8 +82,10 @@ module Yeptris
 
         def visit(obj)
           case obj
-          when nil, true, false, ::Integer then scalar(obj)
-          when ::Float, ::String then anchored_scalar(obj)
+          # strings/floats/ints: stdlib yaml_tree does NOT anchor them
+          # (its float test is load-side only) — and CBOR encode
+          # rejects the anchors the cbor profile feeds it
+          when nil, true, false, ::Integer, ::Float, ::String then scalar(obj)
           when ::Symbol then @tree.new_scalar(":#{obj}", :plain) # psych emits symbols bare, never through visit_String's quoting rules
           # stdlib visit_DateTime: the class tag carries the type (a
           # plain timestamp re-loads as Time) — "!ruby/object:DateTime
