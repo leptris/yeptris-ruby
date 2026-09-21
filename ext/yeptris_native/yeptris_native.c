@@ -423,8 +423,51 @@ static VALUE native_gc_mode_set(VALUE self, VALUE mode) {
     return mode;
 }
 
+/* ABI-drift self-check (the #157-audit silent-nil class): the bundle
+ * is compiled against a specific yep_dom layout; engine drift makes
+ * the walkers read fields at stale offsets — cbor_load returned NIL
+ * on valid CBOR in the dev-checkout audit, with no error anywhere.
+ * Both walkers must round-trip a known document at load, or Init
+ * raises LoadError: lib/yeptris.rb's existing rescue falls back to
+ * the FFI ladder (loudly), and the stale bundle never answers with
+ * garbage. Runs inside rb_protect so a drifted walk raises instead of
+ * crashing the load. */
+static VALUE native_self_check_body(VALUE unused) {
+    /* JSON: {"a"=>[1, 2.5, "x", true, nil]} */
+    const char* json = "{\"a\":[1,2.5,\"x\",true,null]}";
+    VALUE j = yep_rb_parse_json(json, strlen(json), 0);
+    if (j == Qundef || !RB_TYPE_P(j, T_HASH)) return Qfalse;
+    VALUE a = rb_hash_lookup(j, rb_str_new_cstr("a"));
+    if (!RB_TYPE_P(a, T_ARRAY) || RARRAY_LEN(a) != 5) return Qfalse;
+    if (!RB_INTEGER_TYPE_P(rb_ary_entry(a, 0))) return Qfalse;
+    if (!RB_FLOAT_TYPE_P(rb_ary_entry(a, 1))) return Qfalse;
+    if (!RB_TYPE_P(rb_ary_entry(a, 2), T_STRING)) return Qfalse;
+    if (rb_ary_entry(a, 3) != Qtrue || !NIL_P(rb_ary_entry(a, 4))) return Qfalse;
+
+    /* CBOR: A1 61 6B 01 = {"k" => 1} (canonical, hand-encoded) */
+    const char cbor[] = "\xA1\x61\x6B\x01";
+    VALUE c = yep_rb_cbor_load(cbor, sizeof(cbor) - 1, 0);
+    if (c == Qundef || !RB_TYPE_P(c, T_HASH)) return Qfalse;
+    VALUE one = rb_hash_lookup(c, rb_str_new_cstr("k"));
+    if (!RB_INTEGER_TYPE_P(one) || !rb_eql(one, INT2FIX(1))) return Qfalse;
+    return Qtrue;
+}
+
+static void native_self_check(void) {
+    int state = 0;
+    VALUE ok = rb_protect(native_self_check_body, Qnil, &state);
+    if (state != 0 || ok != Qtrue) {
+        if (state != 0) rb_set_errinfo(Qnil);
+        rb_raise(rb_eLoadError,
+                 "yeptris: native materializer failed its ABI self-check "
+                 "(stale build against a drifted engine?) — refusing to "
+                 "register; the FFI ladder will carry the load");
+    }
+}
+
 RUBY_FUNC_EXPORTED void Init_native(void) {
     utf8_enc = rb_utf8_encoding();
+    native_self_check();
     VALUE mYep = rb_define_module("Yeptris");
     VALUE mNat = rb_define_module_under(mYep, "Native");
     rb_define_singleton_method(mNat, "load_json", native_load_json, -1);
