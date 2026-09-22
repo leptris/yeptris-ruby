@@ -11,57 +11,58 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # #201: 15 spec legs per PR queue-starve the run past an hour. PRs
+  # ride a 6-leg subset covering EVERY OS family (linux amd64+arm64,
+  # macos arm64, windows amd64+arm64) plus the 3.0 floor sentinel;
+  # the full sweep — in-between ruby minors, intel, the c_main
+  # evidence row — runs at the merge (main push), and the release
+  # train's published-gem smoke re-proves the shipped matrix.
+  spec-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: m
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            cat >> "$GITHUB_OUTPUT" <<'JSON'
+          matrix={"include":[
+            {"os":"ubuntu-latest","ruby":"3.4"},
+            {"os":"macos-latest","ruby":"3.4"},
+            {"os":"ubuntu-latest","ruby":"3.0"},
+            {"os":"windows-latest","ruby":"3.3"},
+            {"os":"windows-latest","ruby":"3.4"},
+            {"os":"windows-latest","ruby":"4.0"},
+            {"os":"macos-15-intel","ruby":"3.4"},
+            {"os":"ubuntu-latest","ruby":"3.3"},
+            {"os":"ubuntu-latest","ruby":"4.0"},
+            {"os":"ubuntu-24.04-arm","ruby":"3.4"},
+            {"os":"windows-11-arm","ruby":"3.4"},
+            {"os":"ubuntu-latest","ruby":"3.1"},
+            {"os":"ubuntu-latest","ruby":"3.2"},
+            {"os":"ubuntu-latest","ruby":"3.4","c_main":true}
+          ]}
+          JSON
+          else
+            cat >> "$GITHUB_OUTPUT" <<'JSON'
+          matrix={"include":[
+            {"os":"ubuntu-latest","ruby":"3.4"},
+            {"os":"macos-latest","ruby":"3.4"},
+            {"os":"ubuntu-latest","ruby":"3.0"},
+            {"os":"windows-latest","ruby":"3.4"},
+            {"os":"ubuntu-24.04-arm","ruby":"3.4"},
+            {"os":"windows-11-arm","ruby":"3.4"}
+          ]}
+          JSON
+          fi
+
   spec:
+    needs: spec-matrix
     name: Spec on ${{ matrix.os }}${{ matrix.c_main && ' (C main)' || '' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      matrix:
-        # include-ONLY (top-level keys would MERGE rows); ruby rides
-        # every row. c_main: the optional evidence row against the
-        # C repo's default branch — non-blocking, the C repo's own
-        # CI gates main.
-        include:
-          - os: ubuntu-latest
-            ruby: "3.4"
-          - os: macos-latest
-            ruby: "3.4"
-          # the declared floor (gemspec >= 3.0) proven by CI, plus the
-          # in-between minors the platform gems serve
-          - os: ubuntu-latest
-            ruby: "3.0"
-          # Windows spec legs (#318's lesson: the Ruby suite never ran
-          # on Windows, so the mingw gem's load failure shipped for
-          # three releases) — every PR proves the Windows load path.
-          # macOS covers BOTH arches (macos-latest = arm64; the intel
-          # cell rides macos-15-intel). The 3.3/3.4/4.0 series runs
-          # on every OS.
-          - os: windows-latest
-            ruby: "3.3"
-          - os: windows-latest
-            ruby: "3.4"
-          - os: windows-latest
-            ruby: "4.0"
-          - os: macos-15-intel
-            ruby: "3.4"
-          - os: ubuntu-latest
-            ruby: "3.3"
-          - os: ubuntu-latest
-            ruby: "4.0"
-          # Linux covers BOTH arches (ubuntu-latest = amd64; the arm
-          # cell rides ubuntu-24.04-arm)
-          - os: ubuntu-24.04-arm
-            ruby: "3.4"
-          # Windows ARM64 (the aarch64-mingw-ucrt gem's home runner)
-          - os: windows-11-arm
-            ruby: "3.4"
-          - os: ubuntu-latest
-            ruby: "3.1"
-          - os: ubuntu-latest
-            ruby: "3.2"
-          - os: ubuntu-latest
-            ruby: "3.4"
-            c_main: true
+      matrix: ${{ fromJSON(needs.spec-matrix.outputs.matrix) }}
     continue-on-error: ${{ matrix.c_main == true }}
     steps:
       - name: Checkout binding
