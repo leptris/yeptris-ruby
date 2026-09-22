@@ -38,7 +38,16 @@ jobs:
       version: ${{ steps.bump.outputs.new-version }}
       c_semver: ${{ steps.bump.outputs.c-semver }}
     steps:
+      # #194: the branch push MUST authenticate as a user token —
+      # GitHub never fires pull_request workflows for GITHUB_TOKEN
+      # pushes (anti-recursion), so with the default token the
+      # release PR's required checks never start and the merge wait
+      # times out at 60 min. RELEASE_TOKEN (a fine-grained PAT with
+      # contents:write on this repo, optional) makes the checks run;
+      # unset, it falls back to the old behavior.
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
 
       - uses: ruby/setup-ruby@master
         with:
@@ -100,7 +109,7 @@ jobs:
         id: pr
         env:
           NEW_VERSION: ${{ steps.bump.outputs.new-version }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
         run: |
           BRANCH="release/v${NEW_VERSION}"
           git push origin "HEAD:refs/heads/${BRANCH}"
@@ -113,13 +122,15 @@ jobs:
       - name: Wait for the required checks, then merge
         id: merge
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
           NEW_VERSION: ${{ steps.bump.outputs.new-version }}
         run: |
           PR="${{ steps.pr.outputs.pr }}"
-          # the four required contexts run on the bump commit; under
-          # runner saturation this can take a while — 60 min budget
-          for i in $(seq 1 120); do
+          # the required contexts run on the bump commit — with a
+          # RELEASE_TOKEN push they fire immediately and the legs
+          # finish in minutes (#201: fast CI). 60 min budget remains
+          # for saturation.
+          for _ in $(seq 1 120); do
             S=$(gh pr view "$PR" --json mergeStateStatus --jq .mergeStateStatus)
             echo "pr state: $S"
             case "$S" in
@@ -422,7 +433,7 @@ jobs:
             echo "::error::fewer than two valid variants to compare"
             exit 1
           fi
-          first=$(ls /tmp/parity | head -1)
+          first=$(cd /tmp/parity && set -- * && echo "$1")
           ref_list="/tmp/parity/$first/list.txt"
           ref_hashes=$(cd "/tmp/parity/$first" && xargs md5sum < list.txt | sort -k2)
           for d in /tmp/parity/*/; do
@@ -438,7 +449,7 @@ jobs:
               exit 1
             }
           done
-          echo "Ruby sources byte-identical across $(ls /tmp/parity | wc -l | tr -d ' ') variants"
+          echo "Ruby sources byte-identical across $valid variants"
 
       - name: Configure RubyGems credentials (Trusted Publishing / OIDC)
         uses: rubygems/configure-rubygems-credentials@dc5a8d8553e6ee01fc26761a49e99e733d17954a # v2.1.0
