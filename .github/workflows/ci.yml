@@ -156,7 +156,32 @@ jobs:
   # The referee (TODO.restructure/36): the per-arch DEFAULT must beat
   # JSON.parse on both platforms (GATE=1.00); off-default combos run
   # ungated as evidence.
+  # #201: the profile legs exist to gate engine/binding changes —
+  # docs- and psych-port-only PRs skip them (~40% of profile leg-time).
+  # Always on main pushes (the referee archive), path-gated on PRs.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      engine: ${{ steps.f.outputs.engine }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: f
+        with:
+          filters: |
+            engine:
+              - 'ext/**'
+              - 'vendor/**'
+              - 'lib/yeptris/json.rb'
+              - 'lib/yeptris/cbor.rb'
+              - 'lib/yeptris/native*'
+              - 'lib/yeptris/ffi.rb'
+              - 'spec/**'
+              - '.github/workflows/ci.yml'
+
   json-profile:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.engine == 'true'
     name: JSON profile (${{ matrix.os }}, ${{ matrix.gc_mode }}/${{ matrix.ins_mode }}${{ matrix.gated && ', GATE' || '' }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -297,6 +322,8 @@ jobs:
   # CI-fresh runner — the honest venue (dev-host isolated numbers are
   # thermal fiction; the 2026-09-19 (ii) ledger entry).
   cbor-profile:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.engine == 'true'
     name: CBOR profile (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
