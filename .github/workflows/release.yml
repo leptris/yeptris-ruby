@@ -462,3 +462,38 @@ jobs:
               echo "$output"
             fi
           done
+
+  github-release:
+    # #202: the train published to rubygems but created no GitHub
+    # release — hosts that resolve releases by tag (and humans
+    # checking what shipped) had nothing to point at.
+    needs: [bump, publish]
+    if: always() && !cancelled() && !failure() && needs.bump.result == 'success' && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump.outputs.sha || github.ref }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pkg-*
+          path: pkg
+          merge-multiple: true
+
+      - name: Create the GitHub release with the gem artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_VERSION: ${{ needs.bump.outputs.version }}
+        run: |
+          TAG="v${NEW_VERSION}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG exists; attaching any missing artifacts"
+          else
+            gh release create "$TAG" --title "yeptris ${NEW_VERSION}" --generate-notes
+          fi
+          for gem in pkg/*.gem; do
+            base=$(basename "$gem")
+            gh release upload "$TAG" "$gem" --clobber || echo "::warning::upload skipped for $base"
+          done
+          gh release view "$TAG" --json assets --jq '[.assets[].name]'
