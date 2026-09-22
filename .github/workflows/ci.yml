@@ -344,3 +344,31 @@ jobs:
             echo "::warning::the optional native materializer did not build — the FFI ladder carries the load"
           cd "$GITHUB_WORKSPACE"
           bundle exec ruby benchmark/cbor_profile.rb 200
+
+  # The pinned-check trap: branch protection requires two JSON profile
+  # legs BY NAME; a matrix job skipped by the #201 path gate reports
+  # only the unexpanded template name, so those contexts sit "expected"
+  # forever and the PR can never merge (admin override cannot bypass a
+  # check that never reported). These two placeholder legs satisfy the
+  # pinned contexts in seconds on non-engine PRs; they are skipped
+  # whenever the real profiles run, so no name reports twice.
+  profiles-required:
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.engine != 'true'
+    name: JSON profile (${{ matrix.os }}, ${{ matrix.gc_mode }}/${{ matrix.ins_mode }}${{ matrix.gated && ', GATE' || '' }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            gc_mode: disable
+            ins_mode: bulk
+            gated: true
+          - os: macos-latest
+            gc_mode: none
+            ins_mode: bulk
+            gated: true
+    steps:
+      - name: Non-engine PR — profiles skipped by the path gate
+        run: echo "placeholder — satisfies the pinned required checks"
