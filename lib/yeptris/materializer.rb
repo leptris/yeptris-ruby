@@ -78,10 +78,10 @@ module Yeptris
           end
           count_p = ::FFI::MemoryPointer.new(:size_t)
           records = Yeptris::FFI.yeptris_recorder_records(rec, count_p)
-          count = count_p.read_uint64
+          count = Yeptris::FFI.read_c_size_t(count_p)
           arena_len = ::FFI::MemoryPointer.new(:size_t)
           arena_ptr = Yeptris::FFI.yeptris_recorder_arena(rec, arena_len)
-          arena_len_v = arena_len.read_uint64
+          arena_len_v = Yeptris::FFI.read_c_size_t(arena_len)
           arena = arena_ptr.null? || arena_len_v.zero? ? +"" : arena_ptr.read_bytes(arena_len_v)
           flat = records.read_bytes(count * RECORD_SIZE)
                      .unpack(RECORD_UNPACK * count)
