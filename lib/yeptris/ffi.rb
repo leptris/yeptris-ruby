@@ -301,6 +301,17 @@ module Yeptris
       end
     end
 
+    # C out-params are size_t — native width (8 everywhere we ship
+    # except ILP32 armv7, where it is 4). The ffi gem (1.17.4) has no
+    # read_size_t, so dispatch on the measured type size: read_uint64
+    # on a 4-byte :size_t buffer ran out of bounds on arm-linux (the
+    # 0.6.18.1 armv7 smoke, valueml.rb:118).
+    SIZE_T_WIDTH = ::FFI.type_size(:size_t)
+
+    def self.read_c_size_t(ptr)
+      SIZE_T_WIDTH == 8 ? ptr.read_uint64 : ptr.read_uint32
+    end
+
     module Owned
       module_function
 
@@ -310,7 +321,7 @@ module Yeptris
       def string(ptr, len_out = nil)
         return nil if ptr.null?
 
-        len = len_out&.read_uint64
+        len = len_out && Yeptris::FFI.read_c_size_t(len_out)
         s = if len && len > 0
               ptr.read_bytes(len).force_encoding(Encoding::UTF_8)
             else

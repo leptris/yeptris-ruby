@@ -38,9 +38,9 @@ module Yeptris
       yaml = Yeptris.read_input(yaml)
       yaml = yaml.to_s
       vals_p = ::FFI::MemoryPointer.new(:pointer)
-      count_p = ::FFI::MemoryPointer.new(:uint64)
+      count_p = ::FFI::MemoryPointer.new(:size_t)
       arena_p = ::FFI::MemoryPointer.new(:pointer)
-      alen_p = ::FFI::MemoryPointer.new(:uint64)
+      alen_p = ::FFI::MemoryPointer.new(:size_t)
       st = FFI.yeptris_value_drain(
         yaml, yaml.bytesize,
         schema == :compat_11 ? FFI::SCHEMA_11_COMPAT : FFI::SCHEMA_12_CORE,
@@ -51,9 +51,9 @@ module Yeptris
       vals = vals_p.read_pointer
       arena = arena_p.read_pointer
       begin
-        count = count_p.read_uint64
+        count = Yeptris::FFI.read_c_size_t(count_p)
         flat = vals.read_bytes(count * VALUE_SIZE).unpack(UNPACK * count)
-        arena_bytes = arena.read_bytes(alen_p.read_uint64)
+        arena_bytes = arena.read_bytes(Yeptris::FFI.read_c_size_t(alen_p))
         arena_bytes.force_encoding(Encoding::UTF_8)
         walk(flat, arena_bytes, schema == :compat_11)
       ensure
@@ -115,7 +115,7 @@ module Yeptris
       return nil if st == FFI::ERROR_UNSUPPORTED
       raise ParseError, FFI.last_error_message if st != FFI::OK
       buf = out_p.read_pointer
-      len = olen_p.read_uint64
+      len = Yeptris::FFI.read_c_size_t(olen_p)
       bytes = buf.read_bytes(len)
       bytes.force_encoding(Encoding::ASCII_8BIT)
       ::Marshal.load(bytes)

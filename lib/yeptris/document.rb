@@ -164,7 +164,7 @@ class Yeptris::Document
 
   def serialize(canonical: false, best_width: 0, explicit_doc_start: false)
     ensure_alive!
-    len = ::FFI::MemoryPointer.new(:uint64)
+    len = ::FFI::MemoryPointer.new(:size_t)
     ptr =
       if canonical || best_width.positive? || explicit_doc_start
         opts = Yeptris::FFI::EmitOptions.new
@@ -180,13 +180,13 @@ class Yeptris::Document
   end
 
   def serialize_json_compact
-    len = ::FFI::MemoryPointer.new(:uint64)
+    len = ::FFI::MemoryPointer.new(:size_t)
     Yeptris::FFI::Owned.string(Yeptris::FFI.yeptris_serialize_json_ex(@c_ptr, len, 1), len)
   end
 
   def serialize_json
     ensure_alive!
-    len = ::FFI::MemoryPointer.new(:uint64)
+    len = ::FFI::MemoryPointer.new(:size_t)
     Yeptris::FFI::Owned.string(Yeptris::FFI.yeptris_serialize_json(@c_ptr, len), len)
   end
 

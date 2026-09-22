@@ -121,7 +121,7 @@ module Yeptris
     def take_buffer(ptr, len_ptr)
       raise UnencodableError, ::Yeptris::FFI.last_error_message if ptr.null?
 
-      len = len_ptr.read_uint64
+      len = Yeptris::FFI.read_c_size_t(len_ptr)
       ptr.read_bytes(len).force_encoding(Encoding::BINARY)
     ensure
       ::Yeptris::FFI.yeptris_free(ptr) if ptr && !ptr.null?

@@ -50,11 +50,11 @@ class Yeptris::Node
 
   # Scalar content / alias name (UTF-8 String), nil for collections.
   def value
-    len = ::FFI::MemoryPointer.new(:uint64)
+    len = ::FFI::MemoryPointer.new(:size_t)
     ptr = alive { Yeptris::FFI.yeptris_node_value(@c_ptr, len) }
     return nil if ptr.null?
 
-    ptr.read_bytes(len.read_uint64).force_encoding(Encoding::UTF_8)
+    ptr.read_bytes(Yeptris::FFI.read_c_size_t(len)).force_encoding(Encoding::UTF_8)
   end
 
   STYLES = {
@@ -71,19 +71,19 @@ class Yeptris::Node
 
   # Explicit tag URI when present, else nil.
   def tag
-    len = ::FFI::MemoryPointer.new(:uint64)
+    len = ::FFI::MemoryPointer.new(:size_t)
     ptr = alive { Yeptris::FFI.yeptris_node_tag(@c_ptr, len) }
     return nil if ptr.null?
 
-    ptr.read_bytes(len.read_uint64).force_encoding(Encoding::UTF_8)
+    ptr.read_bytes(Yeptris::FFI.read_c_size_t(len)).force_encoding(Encoding::UTF_8)
   end
 
   def anchor
-    len = ::FFI::MemoryPointer.new(:uint64)
+    len = ::FFI::MemoryPointer.new(:size_t)
     ptr = alive { Yeptris::FFI.yeptris_node_anchor(@c_ptr, len) }
     return nil if ptr.null?
 
-    ptr.read_bytes(len.read_uint64).force_encoding(Encoding::UTF_8)
+    ptr.read_bytes(Yeptris::FFI.read_c_size_t(len)).force_encoding(Encoding::UTF_8)
   end
 
   def alias_target
@@ -293,7 +293,7 @@ class Yeptris::Node
     elsif st != Yeptris::FFI::OK
       raise Yeptris::ParseError, Yeptris::FFI.last_error_message
     else
-      bytes = out_p.read_pointer.read_bytes(olen_p.read_uint64)
+      bytes = out_p.read_pointer.read_bytes(Yeptris::FFI.read_c_size_t(olen_p))
       bytes.force_encoding(Encoding::ASCII_8BIT)
       ::Marshal.load(bytes)
     end
