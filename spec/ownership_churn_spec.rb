@@ -18,7 +18,9 @@ RSpec.describe "document ownership under churn (#182)" do
   DOC = "- id: 1\n  title: T\n  link:\n  - content: x\n    type: BIP\n".freeze
   INDEX = (1..500).map { |i| "- :id: #{i}\n  :file: d#{i}.yaml\n" }.join.freeze
 
-  it "survives cumulative parse/stream/load/free under forced GC" do
+  # timeout: false - GC.stress multiplies wall time ~30x; on the shared
+  # arm runner this example legitimately exceeds the 120s cap (#201)
+  it "survives cumulative parse/stream/load/free under forced GC", timeout: false do
     # GC.stress forces a collection after every allocation — the
     # finalizer race window is maximized. A double free or a
     # use-after-free is a hard abort (trap 6 / SIGSEGV), not a
