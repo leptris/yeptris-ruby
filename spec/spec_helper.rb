@@ -29,6 +29,10 @@ RSpec.configure do |config|
   require "timeout"
   cap = (ENV["SLOW_SPEC_SECONDS"] || 120).to_f
   config.around(:each) do |example|
+    if example.metadata[:timeout] == false
+      example.run
+      next
+    end
     begin
       Timeout.timeout(cap) do
         example.run
