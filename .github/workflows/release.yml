@@ -95,12 +95,54 @@ jobs:
           fi
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Push bump commit + tag
+      - name: Open the release PR (main is protected — no direct pushes)
+        id: pr
         env:
           NEW_VERSION: ${{ steps.bump.outputs.new-version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git push origin "HEAD:${{ github.event.repository.default_branch }}"
-          git tag "v${NEW_VERSION}" HEAD
+          BRANCH="release/v${NEW_VERSION}"
+          git push origin "HEAD:refs/heads/${BRANCH}"
+          PR=$(gh pr create --head "$BRANCH" --base "${{ github.event.repository.default_branch }}" \
+            --title "release: ${NEW_VERSION} (lockstep with C v${{ steps.bump.outputs.c_semver }})" \
+            --body "Automated version bump for the ${NEW_VERSION} release.")
+          echo "pr=${PR}" >> "$GITHUB_OUTPUT"
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the required checks, then merge
+        id: merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_VERSION: ${{ steps.bump.outputs.new-version }}
+        run: |
+          PR="${{ steps.pr.outputs.pr }}"
+          # the four required contexts run on the bump commit; under
+          # runner saturation this can take a while — 60 min budget
+          for i in $(seq 1 120); do
+            S=$(gh pr view "$PR" --json mergeStateStatus --jq .mergeStateStatus)
+            echo "pr state: $S"
+            case "$S" in
+              CLEAN) break ;;
+              BLOCKED|UNKNOWN) sleep 30 ;;
+              *) echo "::error::release PR is $S"; exit 1 ;;
+            esac
+          done
+          gh pr merge "$PR" --rebase
+          sleep 5
+          SHA=$(gh pr view "$PR" --json mergeCommit --jq .mergeCommit.oid)
+          if [ -z "$SHA" ]; then
+            echo "::error::merge did not produce a commit"
+            exit 1
+          fi
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Tag the release
+        env:
+          NEW_VERSION: ${{ steps.bump.outputs.new-version }}
+          SHA: ${{ steps.merge.outputs.sha }}
+        run: |
+          git fetch origin main --quiet
+          git tag "v${NEW_VERSION}" "$SHA"
           # A failed run can leave its tag behind while the gems never
           # published; the publish loop is idempotent, so re-dispatching
           # the same version must not die on the tag.
