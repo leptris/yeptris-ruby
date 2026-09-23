@@ -52,12 +52,17 @@ module Yeptris
         h = @handler
         i = 0
         while i < flat.length
+          # #179: psych's parser calls event_location before every
+          # event; TreeBuilder stashes the marks for node locations
+          # (0-based).
+          h.event_location(flat[i + 4] - 1, flat[i + 5] - 1,
+                           flat[i + 6] - 1, flat[i + 7] - 1)
           type = flat[i]
           style = flat[i + 1]
           flags = flat[i + 2]
-          value = field(flat, arena, i + 6)
-          anchor = field(flat, arena, i + 8)
-          tag = field(flat, arena, i + 10)
+          value = field(flat, arena, i + 8)
+          anchor = field(flat, arena, i + 10)
+          tag = field(flat, arena, i + 12)
           case type
           when STREAM_START then h.start_stream(UTF8)
           when STREAM_END then h.end_stream

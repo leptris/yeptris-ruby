@@ -12,9 +12,10 @@ module Yeptris
   # materializer (Node#to_ruby) stays for node-based use; this is the
   # Yeptris::YAML fast path.
   class Materializer
-    RECORD_SIZE = 36 # YeptrisEventRecord layout (events.h, ABI-pinned)
-    FIELDS = 12      # unpacked values per record
-    RECORD_UNPACK = "C4V8" # type/style/flags/tag_id, line..tag_len
+    RECORD_SIZE = 44 # YeptrisEventRecord layout (events.h, ABI-pinned;
+                     # #179 added end_line/end_col in the 0.6.19 window)
+    FIELDS = 14      # unpacked values per record
+    RECORD_UNPACK = "C4V10" # type/style/flags/tag_id, line..tag_len
 
     STREAM_START = 1
     STREAM_END = 2
@@ -256,10 +257,10 @@ module Yeptris
           # not the text
           tag_id = flat[i + 3]
           v = Materializer.scan_by_tag(
-            arena[flat[i + 6], flat[i + 7]], tag_id, (flat[i + 2] & EF_IMPLICIT) != 0
+            arena[flat[i + 8], flat[i + 9]], tag_id, (flat[i + 2] & EF_IMPLICIT) != 0
           )
-          l = flat[i + 9]
-          anchors[arena[flat[i + 8], l]] = v if l != 0
+          l = flat[i + 11]
+          anchors[arena[flat[i + 10], l]] = v if l != 0
           # place(): the scalar fast path inlined — the overwhelming
           # majority of events land here
           if stack.empty?
@@ -284,22 +285,22 @@ module Yeptris
           end
         when MAPPING_START
           h = {}
-          l = flat[i + 9]
-          anchors[arena[flat[i + 8], l]] = h if l != 0
+          l = flat[i + 11]
+          anchors[arena[flat[i + 10], l]] = h if l != 0
           merge_target.push(place(docs, stack, pending_key, pending_key_merge, h))
           stack.push(h)
           pending_key.push(nil)
           pending_key_merge.push(nil)
         when SEQUENCE_START
           a = []
-          l = flat[i + 9]
-          anchors[arena[flat[i + 8], l]] = a if l != 0
+          l = flat[i + 11]
+          anchors[arena[flat[i + 10], l]] = a if l != 0
           merge_target.push(place(docs, stack, pending_key, pending_key_merge, a))
           stack.push(a)
           pending_key.push(nil)
           pending_key_merge.push(nil)
         when ALIAS
-          name = arena[flat[i + 6], flat[i + 7]]
+          name = arena[flat[i + 8], flat[i + 9]]
           raise Yeptris::ParseError, "unknown anchor: #{name.inspect}" unless anchors.key?(name)
 
           place(docs, stack, pending_key, pending_key_merge, anchors[name])

@@ -86,6 +86,8 @@ module Yeptris
     # own entry so referencing Psych::Handlers triggers the load
     autoload :Handlers, "yeptris/psych/handler"
     autoload :Parser, "yeptris/psych/parser"
+    # #179: the located tree builder (stdlib's class, ported)
+    autoload :TreeBuilder, "yeptris/psych/tree_builder"
     autoload :CoderShim, "yeptris/psych/coder_shim"
     autoload :Visitors, "yeptris/psych/visitors"
     # The typed opt-in marker for arbitrary-object dump/load
@@ -425,6 +427,8 @@ module Yeptris
         include Enumerable
 
         attr_reader :children
+        # #179: the event marks (0-based), applied by TreeBuilder
+        attr_accessor :start_line, :start_column, :end_line, :end_column
         attr_reader :handle # @api private — the Yeptris::Node
         # @api private — the tree builder attaches handles; a writer,
         # never instance_variable_set from outside

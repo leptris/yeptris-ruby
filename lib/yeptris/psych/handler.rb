@@ -49,6 +49,11 @@ module Yeptris
 
       def alias(anchor); end
 
+      # #179: called before EVERY event with the event's 0-based marks
+      # (psych 5's contract — TreeBuilder stashes them for node
+      # locations). No-op by default; handlers that care override it.
+      def event_location(start_line, start_column, end_line, end_column); end
+
       # +style+ is one of the scalar constants above; +plain+ /
       # +quoted+ are the implicit-typing flags (plain: resolvable
       # without a tag).
