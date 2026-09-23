@@ -17,7 +17,11 @@ if uname -s | grep -qi 'MINGW\|MSYS\|CYGWIN'; then
 fi
 
 echo "::group::Build libyeptris v$V"
-git clone --quiet --depth 1 --branch "v$V" https://github.com/leptris/yeptris "$WORK/yeptris-c"
+# a pre-seeded engine checkout (the workflow's per-minor native
+# prebuilds) is reused as-is
+if [ ! -d "$WORK/yeptris-c/.git" ]; then
+  git clone --quiet --depth 1 --branch "v$V" https://github.com/leptris/yeptris "$WORK/yeptris-c"
+fi
 if [ "$IS_WINDOWS" = "1" ] && [ "$(ruby -e 'print Gem::Platform.local.to_s' 2>/dev/null)" = "x64-mingw32" ]; then
   # Ruby <= 3.0 (x64-mingw32, the msvcrt ABI): the RubyInstaller
   # mingw-w64 toolchain — gcc via Ninja; gcc keeps the lib prefix and
@@ -117,14 +121,14 @@ cd ext/yeptris_native
 if uname -s | grep -q Darwin; then
   export MACOSX_DEPLOYMENT_TARGET=13.0
   DLD="-dynamic -bundle -undefined dynamic_lookup"
-  RPATH='@loader_path/..'
+  RPATH='@loader_path/../../..'
   EXTRA="-Wl,-rpath,$RPATH"
 elif [ "$IS_WINDOWS" = "1" ]; then
   DLD=""
   EXTRA=""
 else
   DLD=""
-  RPATH='$ORIGIN/..'
+  RPATH='$ORIGIN/../../..'
   EXTRA="-Wl,-rpath,$RPATH"
 fi
 YEPTRIS_LIB_PATH="$LIB" YEPTRIS_SRC="$WORK/yeptris-c/src" \
@@ -145,24 +149,27 @@ fi
 echo "::endgroup::"
 
 if [ "$IS_WINDOWS" = "1" ]; then
-  # the per-Ruby-minor native DLLs (the #207/#227 lesson): the
+  # the per-Ruby-minor native bundles (the #207/#227 lesson): the
   # workflow builds them under each minor BEFORE this script runs —
   # refuse a Windows gem with none (the loud FFI fallback is per-minor
-  # acceptable, never wholesale)
-  # the packaging Ruby's own minor rides too (the workflow's
-  # per-minor steps cover the OTHERS; this build binds this Ruby's
-  # runtime). find, not ls|wc: pipefail aborts the assignment when ls
-  # matches nothing (the sixth leg run died at the verify with the
-  # gem fully built)
+  # acceptable, never wholesale). MINOR rides in the DIRECTORY, the
+  # file name stays native.* (ruby derives Init_<basename> from the
+  # feature — the old native-<minor>.so name asked for the untypeable
+  # "Init_native-3", #157); the packaging Ruby's own minor rides too
+  # (the workflow's per-minor steps cover the OTHERS; this build binds
+  # this Ruby's runtime). find, not ls|wc: pipefail aborts the
+  # assignment when ls matches nothing (the sixth leg run died at the
+  # verify with the gem fully built)
   MINOR=$(ruby -e 'print RUBY_VERSION[/\A\d+\.\d+/]')
-  cp native.so ../../lib/yeptris/native-"$MINOR".so
-  echo "::group::Verify Windows native DLLs"
-  count=$(find ../../lib/yeptris -maxdepth 1 -name 'native-*.so' 2>/dev/null | wc -l)
+  mkdir -p "../../lib/yeptris/$MINOR"
+  cp native.so "../../lib/yeptris/$MINOR/native.so"
+  echo "::group::Verify Windows native bundles"
+  count=$(find ../../lib/yeptris -mindepth 2 -maxdepth 2 -name 'native.*' 2>/dev/null | wc -l)
   if [ "$count" -lt 1 ]; then
-    echo "ERROR: no native-<minor>.so staged (expected the workflow's per-minor builds)"
+    echo "ERROR: no lib/yeptris/<minor>/native.* staged (expected the workflow's per-minor builds)"
     exit 1
   fi
-  echo "native DLLs staged: $count"
+  echo "native bundles staged: $count"
   echo "::endgroup::"
 fi
 
@@ -183,9 +190,14 @@ if [ "$IS_WINDOWS" = "1" ]; then
 else
   # POSIX stages per-minor: the loader must never run an ext built
   # for a different Ruby minor (3.0 loading the 3.3 build = the
-  # JSON ParseError). Dev checkouts keep the plain native.so name.
+  # JSON ParseError). MINOR rides in the DIRECTORY, the file name
+  # stays native.* (ruby derives Init_<basename> from the feature —
+  # the old native-<minor>.so name asked for the untypeable
+  # "Init_native-3" and could never load, #157). Dev checkouts keep
+  # the plain native.so name at lib/yeptris/.
   MINOR="$(ruby -e 'print RUBY_VERSION[/\A\d+\.\d+/]')"
-  cp "ext/yeptris_native/$EXT" "lib/yeptris/native-$MINOR.so"
+  mkdir -p "lib/yeptris/$MINOR"
+  cp "ext/yeptris_native/$EXT" "lib/yeptris/$MINOR/$EXT"
 fi
 # macOS: publish VERSIONLESS (arm64-darwin, no kernel suffix) — the
 # -23 form only matched the build runner's exact darwin, so Tahoe
