@@ -10,16 +10,20 @@
 RSpec.describe "Psych tree builder (the stdlib port)" do
   before(:all) { require "yeptris/psych/drop_in" }
 
-  YAML_DOC = <<~YAML
-    a: 1
-    b:
-      - foo
-      - bar
-    c: &x val
-    d: *x
-  YAML
+  # a METHOD, not a top-level constant: YAML_DOC is a load-order
+  # collision hazard across spec files (schema_spec defines its own)
+  def yaml_doc
+    <<~YAML
+      a: 1
+      b:
+        - foo
+        - bar
+      c: &x val
+      d: *x
+    YAML
+  end
 
-  def tree_of(doc = YAML_DOC)
+  def tree_of(doc = yaml_doc)
     parser = ::Psych::Parser.new(::Psych::TreeBuilder.new)
     parser.parse(doc)
     parser.handler.root
