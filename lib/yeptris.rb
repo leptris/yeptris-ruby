@@ -91,17 +91,21 @@ end
 # Optional C-API materializer (TODO.restructure/22): fused visit →
 # Ruby objects via the Ruby C API. Feature-detected — LoadError leaves
 # the FFI ladder (Marshal → columns → records) as the sole path.
-# Windows names the artifact per Ruby minor (the leptris-ruby #207/
-# #227 lesson): a PE DLL must bind its build Ruby's runtime, so one
-# DLL per supported minor ships and RUBY_VERSION selects. A missing
-# cell (Ruby 3.3 arm64 has no build) falls back LOUDLY to the ladder.
+# One bundle per Ruby minor (the leptris-ruby #207/#227 lesson: a PE
+# DLL must bind its build Ruby's runtime; a unix bundle is also
+# minor-locked by the internal API it compiles against). The MINOR
+# lives in the DIRECTORY (lib/yeptris/<minor>/native.<ext>) and the
+# FILE name stays unversioned: ruby derives the init symbol from the
+# feature basename, so native-3.4.so asked for the untypeable
+# "Init_native-3" and the versioned-file scheme could never load
+# (#157 — every shipped bundle was dead code). Dev checkouts keep
+# the plain native.<ext> name (mkmf layout, built for the running
+# Ruby). A missing cell falls back LOUDLY to the ladder.
 begin
-  # per-minor FIRST everywhere: a single version-agnostic native.so
-  # loads under ANY Ruby (symbols resolve from the host process), and
-  # one built for a different minor is an ABI gamble — Ruby 3.0 ran
-  # a 3.3-built ext and the JSON parse failed. The plain name stays
-  # as the dev-checkout fallback (built for the running Ruby).
-  require "yeptris/native-#{RUBY_VERSION[/\A\d+\.\d+/]}"
+  # per-minor FIRST: a single version-agnostic native.so loads under
+  # ANY Ruby and is an ABI gamble across minors — Ruby 3.0 ran a
+  # 3.3-built ext and the JSON parse failed.
+  require "yeptris/#{RUBY_VERSION[/\A\d+\.\d+/]}/native"
 rescue LoadError
   begin
     require "yeptris/native"

@@ -44,3 +44,12 @@ if [ -n "${YEPTRIS_LIB_PATH:-}" ]; then
   export YEPTRIS_LIB_PATH
 fi
 GEM_HOME="$home" GEM_PATH="$home" ruby "$binding_dir/scripts/gem-smoke.rb" "$ver"
+
+# the native materializer must ride on the installed gem for the
+# running minor (#157): the loader falls back to the FFI ladder
+# LOUDLY, but a gem whose bundles never load ships 3-5x slower CBOR
+# and nobody notices — assert the C-API surface exists
+GEM_HOME="$home" GEM_PATH="$home" ruby -ryeptris -e '
+  abort "smoke: the native materializer did not ride (FFI ladder active)" \
+    unless defined?(Yeptris::Native) && Yeptris::Native.respond_to?(:load_json)
+  puts "smoke: native materializer riding"'

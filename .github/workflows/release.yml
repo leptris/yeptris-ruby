@@ -202,6 +202,67 @@ jobs:
           echo "YEP_V=${{ needs.bump.outputs.c_semver }}" >> "$GITHUB_ENV"
           echo "engine: v${{ needs.bump.outputs.c_semver }}"
 
+      # Pre-seed the checkout + build the engine ONCE so every per-minor
+      # native build links a real libyeptris (the extconf needs
+      # YEPTRIS_LIB_PATH/YEPTRIS_SRC; without them the old per-minor
+      # steps silently no-op'd under continue-on-error and shipped gems
+      # whose bundles could never load — #157). build-platform-gem.sh
+      # reuses both pre-seeded dirs.
+      - name: Pre-seed per-minor native build (non-Windows)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$RUNNER_TEMP/pgem"
+          git clone --quiet "$(git remote get-url origin)" "$RUNNER_TEMP/pgem/yeptris-ruby"
+          LOCKSTEP="$(git -C "$RUNNER_TEMP/pgem/yeptris-ruby" tag -l "v${{ needs.bump.outputs.version }}" | sort -V | tail -1 || true)"
+          test -n "$LOCKSTEP" || { echo "lockstep tag not visible yet"; exit 0; }
+          git -C "$RUNNER_TEMP/pgem/yeptris-ruby" checkout --quiet "$LOCKSTEP"
+          git clone --quiet --depth 1 --branch "v${{ needs.bump.outputs.c_semver }}" \
+            https://github.com/leptris/yeptris "$RUNNER_TEMP/pgem/yeptris-c"
+          cmake -B "$RUNNER_TEMP/pgem/yeptris-c/build" -S "$RUNNER_TEMP/pgem/yeptris-c" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON -DYEPTRIS_WITH_CBOR=ON
+          cmake --build "$RUNNER_TEMP/pgem/yeptris-c/build"
+          LIB="$RUNNER_TEMP/pgem/yeptris-c/build/src/libyeptris.so"
+          [ -f "$LIB" ] || LIB="$RUNNER_TEMP/pgem/yeptris-c/build/src/libyeptris.dylib"
+          {
+            echo "YEP_RUBYREPO=$RUNNER_TEMP/pgem/yeptris-ruby"
+            echo "YEPTRIS_LIB_PATH=$LIB"
+            echo "YEPTRIS_SRC=$RUNNER_TEMP/pgem/yeptris-c/src"
+          } >> "$GITHUB_ENV"
+
+      - name: Per-minor native 3.3 (non-Windows)
+        if: runner.os != 'Windows'
+        uses: ruby/setup-ruby@master
+        with:
+          ruby-version: '3.3'
+          bundler-cache: false
+      - name: Build native 3.3 (non-Windows)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: cd "$YEP_RUBYREPO" && ruby ext/build_windows_native.rb
+      - name: Per-minor native 3.4 (non-Windows)
+        if: runner.os != 'Windows'
+        uses: ruby/setup-ruby@master
+        with:
+          ruby-version: '3.4'
+          bundler-cache: false
+      - name: Build native 3.4 (non-Windows)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: cd "$YEP_RUBYREPO" && ruby ext/build_windows_native.rb
+      - name: Per-minor native 4.0 (non-Windows)
+        if: runner.os != 'Windows'
+        uses: ruby/setup-ruby@master
+        with:
+          ruby-version: '4.0'
+          bundler-cache: false
+      - name: Build native 4.0 (non-Windows)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: cd "$YEP_RUBYREPO" && ruby ext/build_windows_native.rb
+
       - name: Build the per-minor native DLLs (Windows)
         if: runner.os == 'Windows'
         shell: bash
@@ -214,6 +275,20 @@ jobs:
           test -n "$LOCKSTEP" || { echo "lockstep tag not visible yet"; exit 0; }
           git checkout --quiet "$LOCKSTEP"
           echo "YEP_RUBYREPO=$RUNNER_TEMP/pgem/yeptris-ruby" >> "$GITHUB_ENV"
+          # the engine, so the per-minor extconf links a real libyeptris
+          # (without it these builds silently no-op'd — #157)
+          git clone --quiet --depth 1 --branch "v${{ needs.bump.outputs.c_semver }}" \
+            https://github.com/leptris/yeptris "$RUNNER_TEMP/pgem/yeptris-c"
+          cmake -B "$RUNNER_TEMP/pgem/yeptris-c/build" -S "$RUNNER_TEMP/pgem/yeptris-c" \
+            -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON -DYEPTRIS_WITH_CBOR=ON
+          cmake --build "$RUNNER_TEMP/pgem/yeptris-c/build" --config Release
+          LIB="$RUNNER_TEMP/pgem/yeptris-c/build/bin/Release/yeptris.dll"
+          [ -f "$LIB" ] || LIB="$RUNNER_TEMP/pgem/yeptris-c/build/src/Release/yeptris.dll"
+          [ -f "$LIB" ] || LIB="$RUNNER_TEMP/pgem/yeptris-c/build/src/yeptris.dll"
+          cp "$LIB" "$(dirname "$LIB")/libyeptris.dll"
+          echo "YEPTRIS_LIB_PATH=$(cygpath -m "$(dirname "$LIB")/libyeptris.dll")" >> "$GITHUB_ENV"
+          echo "YEPTRIS_SRC=$(cygpath -m "$RUNNER_TEMP/pgem/yeptris-c/src")" >> "$GITHUB_ENV"
 
       - name: Per-minor native DLL 3.3 (Windows)
         if: runner.os == 'Windows' && (matrix.ruby-version || '3.3') != '3.3' && (matrix.ruby-version || '3.3') != '3.0'
@@ -225,7 +300,6 @@ jobs:
       - name: Build native DLL 3.3
         if: runner.os == 'Windows' && (matrix.ruby-version || '3.3') != '3.3' && (matrix.ruby-version || '3.3') != '3.0'
         shell: bash
-        continue-on-error: true
         run: cd "$YEP_RUBYREPO" && ruby ext/build_windows_native.rb
       - name: Per-minor native DLL 3.4 (Windows)
         if: runner.os == 'Windows' && (matrix.ruby-version || '3.3') != '3.4' && (matrix.ruby-version || '3.3') != '3.0'
@@ -237,7 +311,6 @@ jobs:
       - name: Build native DLL 3.4
         if: runner.os == 'Windows' && (matrix.ruby-version || '3.3') != '3.4' && (matrix.ruby-version || '3.3') != '3.0'
         shell: bash
-        continue-on-error: true
         run: cd "$YEP_RUBYREPO" && ruby ext/build_windows_native.rb
       - name: Per-minor native DLL 4.0 (Windows)
         if: runner.os == 'Windows' && (matrix.ruby-version || '3.3') != '4.0' && (matrix.ruby-version || '3.3') != '3.0'
@@ -249,7 +322,6 @@ jobs:
       - name: Build native DLL 4.0
         if: runner.os == 'Windows' && (matrix.ruby-version || '3.3') != '4.0' && (matrix.ruby-version || '3.3') != '3.0'
         shell: bash
-        continue-on-error: true
         run: cd "$YEP_RUBYREPO" && ruby ext/build_windows_native.rb
 
       - uses: ruby/setup-ruby@master
