@@ -619,7 +619,7 @@ end
 # rebind ::Psych. It does not anymore, and re-binding it here would
 # regress #69 (any stdlib psych loaded afterwards would explode with
 # a superclass mismatch), so the old path warns instead of acting.
-if defined?(::Psych) && !::Psych.equal?(Yeptris::Psych)
+if defined?(::Psych) && !::Psych.equal?(Yeptris::Psych) && Yeptris.debug?
   warn "yeptris: \"yeptris/psych\" defines the namespace only — it no " \
        "longer rebinds ::Psych. Require \"yeptris/psych/drop_in\" for the " \
        "drop-in rebind, or call Yeptris::Psych explicitly."

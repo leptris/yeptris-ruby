@@ -4,6 +4,16 @@ module Yeptris
   # The gem's version lives in the parent namespace's file — the last
   # internal require (yeptris/version) retired with it.
   VERSION = "0.6.20.1".freeze
+
+  # Informational notices are OPT-IN (yeptris-ruby#217): consumers
+  # embed yeptris inside CLIs that assert clean stderr, and a
+  # successful fallback is not a warning. YEPTRIS_DEBUG=1 turns the
+  # notices on.
+  def self.debug?
+    return @debug unless @debug.nil?
+    v = ENV["YEPTRIS_DEBUG"]
+    @debug = !v.nil? && !v.empty? && v != "0"
+  end
   # The error hierarchy lives in THIS file (the parent namespace's
   # own file): nested constants do not trigger a parent-constant
   # autoload, and the law forbids internal requires — defining the
@@ -110,8 +120,10 @@ rescue LoadError
   begin
     require "yeptris/native"
   rescue LoadError => e
-    warn "yeptris: no precompiled native materializer for Ruby " \
-         "#{RUBY_VERSION[/\A\d+\.\d+/]} on this platform " \
-         "(#{e.message}); the FFI ladder carries the load"
+    if debug?
+      warn "yeptris: no precompiled native materializer for Ruby " \
+           "#{RUBY_VERSION[/\A\d+\.\d+/]} on this platform " \
+           "(#{e.message}); the FFI ladder carries the load"
+    end
   end
 end
