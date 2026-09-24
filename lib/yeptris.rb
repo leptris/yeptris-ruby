@@ -120,7 +120,7 @@ rescue LoadError
   begin
     require "yeptris/native"
   rescue LoadError => e
-    if debug?
+    if Yeptris.debug? # the require chain is top-level (self = main)
       warn "yeptris: no precompiled native materializer for Ruby " \
            "#{RUBY_VERSION[/\A\d+\.\d+/]} on this platform " \
            "(#{e.message}); the FFI ladder carries the load"
