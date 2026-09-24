@@ -91,6 +91,14 @@ jobs:
             echo "::error::bump did not take (lib/yeptris.rb reads '${NEW_VERSION}')"
             exit 1
           fi
+          if git diff --quiet -- lib/yeptris.rb; then
+            # the ref already carries this VERSION (the no-secret manual
+            # path: the bump PR was merged by hand, then a re-dispatch
+            # of the same version skips the PR entirely and just tags)
+            echo "version-changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "version-changed=true" >> "$GITHUB_OUTPUT"
+          fi
           # The C-semver the build script clones the engine at
           C_SEMVER="$(echo "${NEW_VERSION}" | cut -d. -f1-3)"
           echo "new-version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
@@ -107,6 +115,7 @@ jobs:
 
       - name: Open the release PR (main is protected — no direct pushes)
         id: pr
+        if: steps.bump.outputs.version-changed == 'true'
         env:
           NEW_VERSION: ${{ steps.bump.outputs.new-version }}
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
@@ -114,13 +123,14 @@ jobs:
           BRANCH="release/v${NEW_VERSION}"
           git push origin "HEAD:refs/heads/${BRANCH}"
           PR=$(gh pr create --head "$BRANCH" --base "${{ github.event.repository.default_branch }}" \
-            --title "release: ${NEW_VERSION} (lockstep with C v${{ steps.bump.outputs.c_semver }})" \
+            --title "release: ${NEW_VERSION} (lockstep with C v${{ steps.bump.outputs['c-semver'] }})" \
             --body "Automated version bump for the ${NEW_VERSION} release.")
           echo "pr=${PR}" >> "$GITHUB_OUTPUT"
           echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
 
       - name: Wait for the required checks, then merge
         id: merge
+        if: steps.bump.outputs.version-changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
           NEW_VERSION: ${{ steps.bump.outputs.new-version }}
@@ -151,7 +161,7 @@ jobs:
       - name: Tag the release
         env:
           NEW_VERSION: ${{ steps.bump.outputs.new-version }}
-          SHA: ${{ steps.merge.outputs.sha }}
+          SHA: ${{ steps.merge.outputs.sha || steps.bump.outputs.sha }}
         run: |
           git fetch origin main --quiet
           git tag "v${NEW_VERSION}" "$SHA"
@@ -199,8 +209,17 @@ jobs:
       - name: Resolve the engine version and lockstep tag
         shell: bash
         run: |
-          echo "YEP_V=${{ needs.bump.outputs.c_semver }}" >> "$GITHUB_ENV"
-          echo "engine: v${{ needs.bump.outputs.c_semver }}"
+          V="${{ needs.bump.outputs.c_semver }}"
+          if [ -z "$V" ]; then
+            # no-secret re-dispatch after a manual bump merge: the
+            # skipped bump leaves c_semver empty — derive it from the
+            # VERSION this run is releasing
+            V="$(sed -n 's/.*VERSION = "\([0-9]*\.[0-9]*\.[0-9]*\)\..*/\1/p' lib/yeptris.rb | head -1)"
+            test -n "$V" || { echo "::error::cannot derive the C-semver from lib/yeptris.rb"; exit 1; }
+            echo "(bump skipped) derived C-semver $V from VERSION"
+          fi
+          echo "YEP_V=$V" >> "$GITHUB_ENV"
+          echo "engine: v$V"
 
       # Pre-seed the checkout + build the engine ONCE so every per-minor
       # native build links a real libyeptris (the extconf needs
@@ -465,7 +484,7 @@ jobs:
 
   publish:
     needs: [bump, build-native, build-musl, build-qemu]
-    if: always() && !cancelled() && !failure() && needs.bump.result == 'success'
+    if: always() && !cancelled() && !failure() && needs.bump.result != 'failure'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -551,7 +570,7 @@ jobs:
     # release — hosts that resolve releases by tag (and humans
     # checking what shipped) had nothing to point at.
     needs: [bump, publish]
-    if: always() && !cancelled() && !failure() && needs.bump.result == 'success' && needs.publish.result == 'success'
+    if: always() && !cancelled() && !failure() && needs.bump.result != 'failure' && needs.publish.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
