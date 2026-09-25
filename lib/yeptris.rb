@@ -3,7 +3,7 @@
 module Yeptris
   # The gem's version lives in the parent namespace's file — the last
   # internal require (yeptris/version) retired with it.
-  VERSION = "0.6.20.2".freeze
+  VERSION = "0.6.21.1".freeze
 
   # Informational notices are OPT-IN (yeptris-ruby#217): consumers
   # embed yeptris inside CLIs that assert clean stderr, and a
