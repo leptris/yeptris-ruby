@@ -1,0 +1,25 @@
+# A stand-in for the real-world locale-file face (isodoc's
+# i18n-en.yaml): multi-line flow mappings closed at or near the
+# parent's column, mixed with block mappings.
+language: en
+obligation: Obligation
+admonition: {
+  danger: Danger,
+  warning: Warning,
+  caution: Caution,
+  important: Important,
+  safety precautions: Safety Precautions,
+  editorial: Editorial Note
+}
+title_prefixes:
+  part: "Part {{ var1 }}"
+  amendment: "Amendment {{ var1 }}"
+locality: {
+                      section: Section,
+                      clause: Clause,
+                      definition: Definition,
+                      part: Part
+                    }
+grammar_abbrevs:
+  masculine: m
+  feminine: f
