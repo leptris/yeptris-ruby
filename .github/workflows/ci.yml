@@ -49,6 +49,7 @@ jobs:
       # A binding PR needing a NEWER C API waits for the C release —
       # enforced ordering, by design.
       - name: Resolve the C core ref
+        shell: bash
         run: echo "YEP_C_REF=$(git ls-remote --tags --refs --sort=-v:refname https://github.com/leptris/yeptris.git 'v*' | head -1 | cut -d/ -f3)" >> "$GITHUB_ENV"
 
       - name: Checkout libyeptris (the C core)
@@ -224,6 +225,7 @@ jobs:
       # same tag pin as the spec job: the referee measures the C lib
       # users get (TODO.restructure/40)
       - name: Resolve the C core ref
+        shell: bash
         run: echo "YEP_C_REF=$(git ls-remote --tags --refs --sort=-v:refname https://github.com/leptris/yeptris.git 'v*' | head -1 | cut -d/ -f3)" >> "$GITHUB_ENV"
 
       - name: Checkout libyeptris (the C core)
@@ -309,6 +311,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Resolve the C core ref
+        shell: bash
         run: echo "YEP_C_REF=$(git ls-remote --tags --refs --sort=-v:refname https://github.com/leptris/yeptris.git 'v*' | head -1 | cut -d/ -f3)" >> "$GITHUB_ENV"
 
       - name: Checkout libyeptris (the C core)
