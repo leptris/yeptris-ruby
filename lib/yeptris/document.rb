@@ -17,6 +17,16 @@ class Yeptris::Document
   attr_reader :parse_schema
 
   def initialize(c_ptr = nil, freed = Freed.new(:alive), parse_schema = :core_12)
+    # The pointer is produced by the FFI parse/create calls; a nil (or
+    # non-pointer) argument is an API misuse — Document.parse and
+    # Document.create are the entry points. Fail with that guidance
+    # instead of a NoMethodError from the finalizer guard below (the
+    # FFI::Pointer#null? probe does not exist on nil).
+    unless c_ptr.is_a?(::FFI::Pointer)
+      raise ArgumentError,
+            "a document FFI pointer is required — build documents with " \
+            "Yeptris::Document.parse or Yeptris::Document.create"
+    end
     @c_ptr = c_ptr
     @freed = freed
     @parse_schema = parse_schema
