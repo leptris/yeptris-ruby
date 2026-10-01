@@ -482,7 +482,15 @@ jobs:
             else
               gem install ffi --no-document
             fi
-            gem install --local --no-document "'"$GEM"'"
+            # alpine's ffi is the SYSTEM package (apk ruby-ffi): it
+            # loads fine but is invisible to rubygems' resolver, and
+            # ffi ships no armv7-musl gem — ignore deps for the smoke
+            # install (the system ffi satisfies the require)
+            if [ -f /etc/alpine-release ]; then
+              gem install --local --no-document --ignore-dependencies "'"$GEM"'"
+            else
+              gem install --local --no-document "'"$GEM"'"
+            fi
             ruby -e "require %(yeptris); abort %(smoke) unless Yeptris::YAML.load(%(a: [1, 2])) == { %(a) => [1, 2] }; puts %(SMOKE PASS ${{ matrix.name }})"
           '
 
