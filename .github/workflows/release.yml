@@ -314,14 +314,14 @@ jobs:
           echo "YEPTRIS_SRC=$(cygpath -m "$RUNNER_TEMP/pgem/yeptris-c/src")" >> "$GITHUB_ENV"
 
       - name: Per-minor native DLL 3.3 (Windows)
-        if: runner.os == 'Windows' && (matrix.ruby-version || '3.3') != '3.3' && (matrix.ruby-version || '3.3') != '3.0'
+        if: runner.os == 'Windows' && (matrix.ruby-version || '3.3') != '3.3' && (matrix.ruby-version || '3.3') != '3.0' && matrix.os != 'windows-11-arm'
         uses: ruby/setup-ruby@master
         with:
           ruby-version: '3.3'
           bundler-cache: false
         continue-on-error: true
       - name: Build native DLL 3.3
-        if: runner.os == 'Windows' && (matrix.ruby-version || '3.3') != '3.3' && (matrix.ruby-version || '3.3') != '3.0'
+        if: runner.os == 'Windows' && (matrix.ruby-version || '3.3') != '3.3' && (matrix.ruby-version || '3.3') != '3.0' && matrix.os != 'windows-11-arm'
         shell: bash
         run: cd "$YEP_RUBYREPO" && ruby ext/build_windows_native.rb
       - name: Per-minor native DLL 3.4 (Windows)
