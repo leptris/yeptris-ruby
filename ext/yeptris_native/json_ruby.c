@@ -320,15 +320,32 @@ void yep_rb_set_gc_mode(int mode) {
 #include <time.h>
 
 
+/* portable monotonic seconds: clock_gettime macro-expands to Ruby's
+ * rb_w32_clock_gettime on mingw toolchains, which the windows-11-arm
+ * Ruby does not export (undefined symbol at link) */
+#ifdef _WIN32
+#include <windows.h>
+static double yep_now_s(void) {
+    LARGE_INTEGER c, f;
+    QueryPerformanceCounter(&c);
+    QueryPerformanceFrequency(&f);
+    return (double)c.QuadPart / (double)f.QuadPart;
+}
+#else
+static double yep_now_s(void) {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (double)t.tv_sec + (double)t.tv_nsec / 1e9;
+}
+#endif
+
 double yep_rb_scan_time(const char* p, size_t len, int n) {
     static const YeptrisVisitVTable none = {0};
-    struct timespec t0, t1;
-    clock_gettime(CLOCK_MONOTONIC, &t0);
+    double s0 = yep_now_s();
     for (int i = 0; i < n; i++) {
         (void)yeptris_visit_json(p, len, &none, NULL);
     }
-    clock_gettime(CLOCK_MONOTONIC, &t1);
-    return (double)(t1.tv_sec - t0.tv_sec) + (double)(t1.tv_nsec - t0.tv_nsec) / 1e9;
+    return yep_now_s() - s0;
 }
 
 VALUE yep_rb_parse_json(const char* p, size_t len, int strict_dup) {
