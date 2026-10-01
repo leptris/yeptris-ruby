@@ -477,20 +477,17 @@ jobs:
           docker run --rm --platform "${{ matrix.platform }}" \
             -v "$RUNNER_TEMP:/work" -w /work "${{ matrix.image }}" sh -c '
             set -eux
+            DEPS=""
             if [ -f /etc/alpine-release ]; then
               apk add --no-cache ruby-ffi >/dev/null 2>&1 || gem install ffi --no-document
+              # alpine's ffi is the SYSTEM package: it loads fine but
+              # is invisible to rubygems' resolver, and ffi ships no
+              # armv7-musl gem — the smoke install skips resolution
+              DEPS="--ignore-dependencies"
             else
               gem install ffi --no-document
             fi
-            # alpine's ffi is the SYSTEM package (apk ruby-ffi): it
-            # loads fine but is invisible to rubygems' resolver, and
-            # ffi ships no armv7-musl gem — ignore deps for the smoke
-            # install (the system ffi satisfies the require)
-            if [ -f /etc/alpine-release ]; then
-              gem install --local --no-document --ignore-dependencies "'"$GEM"'"
-            else
-              gem install --local --no-document "'"$GEM"'"
-            fi
+            gem install --local --no-document $DEPS "'"$GEM"'"
             ruby -e "require %(yeptris); abort %(smoke) unless Yeptris::YAML.load(%(a: [1, 2])) == { %(a) => [1, 2] }; puts %(SMOKE PASS ${{ matrix.name }})"
           '
 
