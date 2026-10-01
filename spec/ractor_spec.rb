@@ -8,14 +8,9 @@ require "yeptris"
 # path must be pre-warmed on the main Ractor before spawning (the
 # require does it: FFI attaches and the autoloads resolve there —
 # require/autoload cannot run inside a non-main Ractor).
-unless defined?(Ractor) # Ractor ships with Ruby 3.0+ (the gem's floor)
-  pending "this Ruby has no Ractor"
-end
 # Ruby 3.0's Ractor VM aborts the whole process mid-suite (core dump,
-# nondeterministic) — gate to 3.1+, where Ractor runs stable.
-if defined?(Ractor) && Gem::Version.new(RUBY_VERSION) < Gem::Version.new("3.1.0")
-  pending "Ractor aborts the 3.0 VM (core dump); 3.1+ runs it stable"
-end
+# nondeterministic) — the pin gates to 3.1+, where Ractor runs stable.
+RACTOR_SUPPORTED = defined?(Ractor) && Gem::Version.new(RUBY_VERSION) >= Gem::Version.new("3.1.0")
 
 # Some ffi platform variants predate ffi 1.17's Ractor support and
 # raise "defined with an un-shareable Proc in a different Ractor" on
@@ -39,6 +34,7 @@ end
 
 RSpec.describe "Ractor" do
   before do
+    skip "Ractor aborts the 3.0 VM (core dump); 3.1+ runs it stable" unless RACTOR_SUPPORTED
     skip "this ffi platform variant lacks Ractor support (un-shareable Proc; ffi >= 1.17 provides it)" unless RACTOR_FFI_CAPABLE
   end
 
