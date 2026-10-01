@@ -242,7 +242,13 @@ module Yeptris
           pending_key.pop
           pending_key_tag.pop
           target = merge_target.pop
-          Materializer.merge_into(target, closed) if target
+          if target
+            if closed.is_a?(Hash) || (closed.is_a?(Array) && closed.all? { |e| e.is_a?(Hash) })
+              Materializer.merge_into(target, closed)
+            else
+              target["<<"] = closed # Psych keeps non-mergeable merge values literally
+            end
+          end
         when DOC
           docs.push(nil)
         when ALIAS
@@ -402,7 +408,13 @@ module Yeptris
           pending_key.pop
           pending_key_tag.pop
           target = merge_target.pop
-          Materializer.merge_into(target, closed) if target
+          if target
+            if closed.is_a?(Hash) || (closed.is_a?(Array) && closed.all? { |e| e.is_a?(Hash) })
+              Materializer.merge_into(target, closed)
+            else
+              target["<<"] = closed # Psych keeps non-mergeable merge values literally
+            end
+          end
         when DOC
           docs.push(nil)
         when ALIAS
@@ -442,8 +454,11 @@ module Yeptris
       if key == "<<" && pending_key_tag[-1] == 9 # TAG_MERGE
         if (v.is_a?(Hash) || v.is_a?(Array)) && v.empty?
           parent # deferred: contents arrive after the open
-        else
+        elsif v.is_a?(Hash) || (v.is_a?(Array) && v.all? { |e| e.is_a?(Hash) })
           Materializer.merge_into(parent, v)
+          nil
+        else
+          parent["<<"] = v # Psych keeps non-mergeable merge values literally
           nil
         end
       else
