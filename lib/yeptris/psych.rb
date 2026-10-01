@@ -182,12 +182,26 @@ module Yeptris
         Visitors::ToRuby.visit(tree.children.first)
       end
 
-      def safe_load(yaml, permitted_classes: [::Date, ::Time], aliases: false, **)
+      def deep_symbolize_keys(obj)
+        case obj
+        when Hash
+          obj.each_with_object({}) do |(k, v), out|
+            out[k.is_a?(String) ? k.to_sym : k] = deep_symbolize_keys(v)
+          end
+        when Array then obj.map { |v| deep_symbolize_keys(v) }
+        else obj
+        end
+      end
+
+      def safe_load(yaml, permitted_classes: [::Date, ::Time], aliases: false,
+                    symbolize_names: false, **)
         begin
           doc = Yeptris::Document.parse(yaml, schema: :compat_11)
           return nil if doc.nil? # the legal empty stream
 
-          force_utf8_scalars(walk_safe(doc.root(0), permitted_classes, aliases))
+          res = force_utf8_scalars(walk_safe(doc.root(0), permitted_classes, aliases))
+          res = deep_symbolize_keys(res) if symbolize_names
+          res
         rescue ::Yeptris::ParseError => e
           doc&.free unless doc&.freed?
           translate_parse_error(e)
