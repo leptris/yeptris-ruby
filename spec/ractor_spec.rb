@@ -12,7 +12,31 @@ unless defined?(Ractor) # Ractor ships with Ruby 3.0+ (the gem's floor)
   pending "this Ruby has no Ractor"
 end
 
+# Some ffi platform variants predate ffi 1.17's Ractor support and
+# raise "defined with an un-shareable Proc in a different Ractor" on
+# the first FFI call inside a non-main Ractor (observed: the
+# windows-arm ffi variant). Probe for it once; skip with the reason
+# instead of failing — the pin stays enforcing everywhere the
+# runtime's ffi actually supports Ractors.
+RACTOR_FFI_CAPABLE = begin
+  probe = Ractor.new do
+    begin
+      Yeptris::FFI.yeptris_version.to_s
+      true
+    rescue RuntimeError
+      false
+    end
+  end
+  probe.take
+rescue StandardError
+  false
+end
+
 RSpec.describe "Ractor" do
+  before do
+    skip "this ffi platform variant lacks Ractor support (un-shareable Proc; ffi >= 1.17 provides it)" unless RACTOR_FFI_CAPABLE
+  end
+
   it "parses inside a non-main Ractor" do
     r = Ractor.new do
       Yeptris::YAML.load("a: 1\nb: [x, y]\nc: {d: true}")
