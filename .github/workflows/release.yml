@@ -374,7 +374,7 @@ jobs:
         with:
           name: pkg-${{ matrix.os }}-${{ matrix.ruby-version || 'default' }}
           path: |
-            ${{ runner.temp }}/pgem/*.gem
+            ${{ runner.temp }}/pgem/**/*.gem
 
   build-musl:
     needs: bump
@@ -405,7 +405,10 @@ jobs:
         run: |
           test -f "$RUNNER_TEMP/pgem/gempath" || { echo "no gem this run"; exit 0; }
           GEM="$(cut -d= -f2 "$RUNNER_TEMP/pgem/gempath")"
+          # The build script records $WORK/yeptris-ruby/$GEMFILE; the
+          # mount is /pgem — re-base whatever prefix was recorded
           GEM="${GEM#/pgem}"
+          GEM="/pgem/${GEM#/}"
           docker run --rm -v "$RUNNER_TEMP/pgem:/pgem" -w /pgem ruby:3.4-alpine sh -c '
             set -eux
             gem install ffi --no-document
@@ -416,7 +419,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: pkg-musl-${{ matrix.os }}
-          path: ${{ runner.temp }}/pgem/*.gem
+          # the gem lands under pgem/yeptris-ruby/ (the script builds
+          # inside its clone) — cover both layouts
+          path: ${{ runner.temp }}/pgem/**/*.gem
 
   build-qemu:
     # armv7 gnu+musl, ppc64le, s390x — no hosted runners. The setup
@@ -484,7 +489,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: pkg-qemu-${{ matrix.name }}
-          path: ${{ runner.temp }}/pgem-${{ matrix.name }}/*.gem
+          path: ${{ runner.temp }}/pgem-${{ matrix.name }}/**/*.gem
 
   publish:
     needs: [bump, build-native, build-musl, build-qemu]
