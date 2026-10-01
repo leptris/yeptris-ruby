@@ -21,16 +21,20 @@ RACTOR_SUPPORTED = defined?(Ractor) && Gem::Version.new(RUBY_VERSION) >= Gem::Ve
 # The probe itself spawns a Ractor — it must NOT run on the 3.0 VM
 # (it would crash the process the gate exists to protect).
 RACTOR_FFI_CAPABLE = if RACTOR_SUPPORTED
-  probe = Ractor.new do
-    begin
-      Yeptris::FFI.yeptris_version.to_s
-      true
-    rescue RuntimeError
-      false
+  begin
+    probe = Ractor.new do
+      begin
+        Yeptris::FFI.yeptris_version.to_s
+        true
+      rescue RuntimeError
+        false
+      end
     end
+    probe.take
+  rescue StandardError
+    false
   end
-  probe.take
-rescue StandardError
+else
   false
 end
 
