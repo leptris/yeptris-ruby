@@ -18,10 +18,13 @@ fi
 
 echo "::group::Build libyeptris v$V"
 # a pre-seeded engine checkout (the workflow's per-minor native
-# prebuilds) is reused as-is
+# prebuilds) is reused as-is — but its BUILD DIR carries the prebuild
+# step's generator choice (Visual Studio), and configuring here with
+# Ninja trips CMake's cache guard. Build dirs are disposable: wipe.
 if [ ! -d "$WORK/yeptris-c/.git" ]; then
   git clone --quiet --depth 1 --branch "v$V" https://github.com/leptris/yeptris "$WORK/yeptris-c"
 fi
+rm -rf "$WORK/yeptris-c/build"
 if [ "$IS_WINDOWS" = "1" ] && [ "$(ruby -e 'print Gem::Platform.local.to_s' 2>/dev/null)" = "x64-mingw32" ]; then
   # Ruby <= 3.0 (x64-mingw32, the msvcrt ABI): the RubyInstaller
   # mingw-w64 toolchain — gcc via Ninja; gcc keeps the lib prefix and
