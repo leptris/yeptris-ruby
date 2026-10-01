@@ -514,7 +514,7 @@ jobs:
           set -euo pipefail
           rm -rf /tmp/parity && mkdir -p /tmp/parity
           valid=0
-          for gem in pkg/*.gem; do
+          for gem in pkg/*.gem pkg/**/*.gem; do
             name=$(basename "$gem" .gem)
             # a .gem's OUTER container is a plain POSIX tar, not gzip
             if ! tar tf "$gem" >/dev/null 2>&1; then
@@ -556,7 +556,7 @@ jobs:
       - name: Publish to rubygems.org
         run: |
           ls -la pkg/
-          for gem in pkg/*.gem; do
+          for gem in pkg/*.gem pkg/**/*.gem; do
             echo "Pushing $gem..."
             if ! output=$(gem push -V "$gem" 2>&1); then
               case "$output" in
@@ -602,7 +602,7 @@ jobs:
           else
             gh release create "$TAG" --title "yeptris ${NEW_VERSION}" --generate-notes
           fi
-          for gem in pkg/*.gem; do
+          for gem in pkg/*.gem pkg/**/*.gem; do
             base=$(basename "$gem")
             gh release upload "$TAG" "$gem" --clobber || echo "::warning::upload skipped for $base"
           done
