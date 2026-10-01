@@ -18,7 +18,9 @@ RACTOR_SUPPORTED = defined?(Ractor) && Gem::Version.new(RUBY_VERSION) >= Gem::Ve
 # windows-arm ffi variant). Probe for it once; skip with the reason
 # instead of failing — the pin stays enforcing everywhere the
 # runtime's ffi actually supports Ractors.
-RACTOR_FFI_CAPABLE = begin
+# The probe itself spawns a Ractor — it must NOT run on the 3.0 VM
+# (it would crash the process the gate exists to protect).
+RACTOR_FFI_CAPABLE = if RACTOR_SUPPORTED
   probe = Ractor.new do
     begin
       Yeptris::FFI.yeptris_version.to_s
