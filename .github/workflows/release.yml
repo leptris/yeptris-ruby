@@ -31,12 +31,17 @@ permissions:
 
 jobs:
   bump:
-    if: github.event_name == 'workflow_dispatch' && inputs.next_version != ''
+    # Runs on EVERY dispatch (#215): an empty next_version means "the
+    # bump is already merged by hand" — the step reads the current
+    # VERSION off the dispatch ref, emits version-changed=false, and
+    # the PR/merge steps skip (no zero-diff PR, no 60-min wait).
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.bump.outputs.sha }}
       version: ${{ steps.bump.outputs.new-version }}
       c_semver: ${{ steps.bump.outputs.c-semver }}
+      version_changed: ${{ steps.bump.outputs.version-changed }}
     steps:
       # #194: the branch push MUST authenticate as a user token —
       # GitHub never fires pull_request workflows for GITHUB_TOKEN
@@ -65,7 +70,10 @@ jobs:
           # exists because a non-semver input once produced a junk tag
           # literally named "v" (the sibling project's incident).
           INPUT="${NEXT_VERSION}"
-          if [[ "$INPUT" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if [ -z "$INPUT" ]; then
+            : # no version given (#215): the bump is already merged by
+              # hand; complete the train from the dispatch ref's VERSION
+          elif [[ "$INPUT" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             :
           elif [[ "$INPUT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             : # an exact C-semver-shaped binding version is accepted as-is
@@ -84,12 +92,21 @@ jobs:
             echo "::error::next_version must be X.Y.Z.W (lockstep), X.Y.Z, or major/minor/patch, got '${INPUT}'"
             exit 1
           fi
-          echo "Releasing ${INPUT}"
-          sed -i "s/VERSION = \".*\"/VERSION = \"${INPUT}\"/" lib/yeptris.rb
-          NEW_VERSION=$(sed -n 's/.*VERSION = "\(.*\)".*/\1/p' lib/yeptris.rb | head -1)
-          if [ "${NEW_VERSION}" != "${INPUT}" ]; then
-            echo "::error::bump did not take (lib/yeptris.rb reads '${NEW_VERSION}')"
-            exit 1
+          if [ -z "$INPUT" ]; then
+            NEW_VERSION=$(sed -n 's/.*VERSION = "\(.*\)".*/\1/p' lib/yeptris.rb | head -1)
+            if [ -z "$NEW_VERSION" ]; then
+              echo "::error::cannot read VERSION from lib/yeptris.rb"
+              exit 1
+            fi
+            echo "Re-dispatch with the current VERSION ${NEW_VERSION} (#215)"
+          else
+            echo "Releasing ${INPUT}"
+            sed -i "s/VERSION = \".*\"/VERSION = \"${INPUT}\"/" lib/yeptris.rb
+            NEW_VERSION=$(sed -n 's/.*VERSION = "\(.*\)".*/\1/p' lib/yeptris.rb | head -1)
+            if [ "${NEW_VERSION}" != "${INPUT}" ]; then
+              echo "::error::bump did not take (lib/yeptris.rb reads '${NEW_VERSION}')"
+              exit 1
+            fi
           fi
           # The C-semver the build script clones the engine at
           C_SEMVER="$(echo "${NEW_VERSION}" | cut -d. -f1-3)"
@@ -100,13 +117,16 @@ jobs:
           git add lib/yeptris.rb
           if git diff --cached --quiet; then
             echo "No version change; tagging current HEAD."
+            echo "version-changed=false" >> "$GITHUB_OUTPUT"
           else
             git commit -m "release: ${NEW_VERSION} (lockstep with C v${C_SEMVER})"
+            echo "version-changed=true" >> "$GITHUB_OUTPUT"
           fi
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Open the release PR (main is protected — no direct pushes)
         id: pr
+        if: steps.bump.outputs.version-changed == 'true'
         env:
           NEW_VERSION: ${{ steps.bump.outputs.new-version }}
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
@@ -121,6 +141,7 @@ jobs:
 
       - name: Wait for the required checks, then merge
         id: merge
+        if: steps.bump.outputs.version-changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
           NEW_VERSION: ${{ steps.bump.outputs.new-version }}
@@ -151,7 +172,9 @@ jobs:
       - name: Tag the release
         env:
           NEW_VERSION: ${{ steps.bump.outputs.new-version }}
-          SHA: ${{ steps.merge.outputs.sha }}
+          # unchanged version: the merge step never ran — the tag lands
+          # on the dispatch ref's HEAD (#215)
+          SHA: ${{ steps.merge.outputs.sha || github.sha }}
         run: |
           git fetch origin main --quiet
           git tag "v${NEW_VERSION}" "$SHA"
@@ -465,7 +488,9 @@ jobs:
 
   publish:
     needs: [bump, build-native, build-musl, build-qemu]
-    if: always() && !cancelled() && !failure() && needs.bump.result == 'success'
+    # a SKIPPED bump (empty input) is valid (#215): only failure stops
+    # the train
+    if: always() && !cancelled() && !failure() && needs.bump.result != 'failure'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -551,7 +576,7 @@ jobs:
     # release — hosts that resolve releases by tag (and humans
     # checking what shipped) had nothing to point at.
     needs: [bump, publish]
-    if: always() && !cancelled() && !failure() && needs.bump.result == 'success' && needs.publish.result == 'success'
+    if: always() && !cancelled() && !failure() && needs.bump.result != 'failure' && needs.publish.result != 'failure'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
