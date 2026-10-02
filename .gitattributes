@@ -1,0 +1,5 @@
+# Platform gems must ship byte-identical Ruby sources (publish parity).
+# Windows runners default to core.autocrlf=true, so every checkout path
+# (actions/checkout, the release clones, the build script's clones) must
+# be normalized to LF at the repo level.
+* text=auto eol=lf
