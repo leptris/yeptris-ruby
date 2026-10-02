@@ -556,6 +556,13 @@ jobs:
       - name: Publish to rubygems.org
         run: |
           ls -la pkg/
+          # globstar: download-artifact's merge-multiple keeps the
+          # upload paths' nesting, so gems sit at varying depth under
+          # pkg/ — without globstar ** is a single level and the gems
+          # never match; without nullglob the unmatched pattern is
+          # pushed as a literal filename (the 0.6.28.4 train died on
+          # exactly that). Parity (above) globs correctly already.
+          shopt -s globstar nullglob
           for gem in pkg/*.gem pkg/**/*.gem; do
             echo "Pushing $gem..."
             if ! output=$(gem push -V "$gem" 2>&1); then
