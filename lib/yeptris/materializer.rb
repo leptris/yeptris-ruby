@@ -122,21 +122,30 @@ module Yeptris
         # the ported test_julian_date otherwise)
         return ::Date.strptime(v, "%F", ::Date::GREGORIAN) unless v.match?(/[Tt ]\d/)
 
-        # normalize the YAML 1.1 space forms onto iso8601 for
-        # xmlschema: "2001-12-14 21:59:43.10 -05:00" ->
-        # "2001-12-14T21:59:43.10-05:00" (Psych's scanner does the
-        # same dance)
-        ts = v.sub(/ (\d)/, 'T\1').sub(/ ([+-]\d)/, '\1').sub(/ +Z\z/i, 'Z')
-        # Psych reads a NAIVE timestamp (no zone, no Z) as a UTC
-        # instant expressed in the local zone — one wall-clock hour
-        # off from reading it as local time (pinned by spec against
-        # Psych.unsafe_load across tz shapes)
-        if ts.match?(/(Z|[+-]\d\d:?\d\d)\z/i)
-          Time.xmlschema(ts)
-        else
-          Time.xmlschema(ts + "Z").getlocal
-        end
-      rescue ArgumentError
+        # stdlib scalar_scanner's parse_time, verbatim arithmetic:
+        # Time.xmlschema REJECTS the short offsets psych accepts
+        # ("2001-12-14 21:59:43 -5" — psych's zone is [-+]\d+(:\d\d)?),
+        # so a tagged timestamp must not ride xmlschema's zone
+        # grammar; the offset is applied by hand exactly as psych
+        # does, and a NAIVE timestamp (no zone, no Z) is read as a
+        # UTC instant in the local zone (klass.at in psych — one
+        # wall-clock hour off from reading it as local time; pinned
+        # by spec against Psych.unsafe_load across tz shapes)
+        date, time = v.split(/[Tt]|\s+/, 2)
+        (yy, m, dd) = date.match(/^(-?\d{4})-(\d{1,2})-(\d{1,2})/).captures.map(&:to_i)
+        md = time.match(/(\d+:\d+:\d+)(?:\.(\d*))?\s*(Z|[-+]\d+(:\d\d)?)?/)
+        (hh, mm, ss) = md[1].split(":").map(&:to_i)
+        us = (md[2] ? Rational("0.#{md[2]}") : 0) * 1_000_000
+
+        t = ::Time.utc(yy, m, dd, hh, mm, ss, us)
+        return t if md[3] == "Z"
+        return t.getlocal unless md[3]
+
+        tz = md[3].match(/^([+-]?\d{1,2}):?(\d{1,2})?$/)[1..].compact.map { |d| Integer(d, 10) }
+        offset = tz.first * 3600
+        offset += (offset.negative? ? -1 : 1) * ((tz[1] || 0) * 60)
+        ::Time.new(yy, m, dd, hh, mm, ss + Rational(us, 1_000_000), offset)
+      rescue ArgumentError, NoMethodError
         v
       end
 
