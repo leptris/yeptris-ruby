@@ -563,6 +563,13 @@ jobs:
                 *"Repushing of gem versions is not allowed"*|"already pushed"*|"is taken"*)
                   echo "::warning::$gem already published; skipping"
                   ;;
+                # a push that died mid-flight on a rubygems server
+                # error wedges that version+platform slot ("did not
+                # finish pushing"); the slot needs rubygems support or
+                # a fresh patch cut — a loud warning, not a dead train
+                *"did not finish pushing"*)
+                  echo "::warning::$gem wedged mid-push on rubygems' side; ship it with the next patch cut"
+                  ;;
                 *)
                   echo "$output"
                   exit 1
