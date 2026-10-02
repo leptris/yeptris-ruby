@@ -22,7 +22,7 @@ echo "::group::Build libyeptris v$V"
 # step's generator choice (Visual Studio), and configuring here with
 # Ninja trips CMake's cache guard. Build dirs are disposable: wipe.
 if [ ! -d "$WORK/yeptris-c/.git" ]; then
-  git clone --quiet --depth 1 --branch "v$V" https://github.com/leptris/yeptris "$WORK/yeptris-c"
+  git clone --quiet -c core.autocrlf=false -c core.eol=lf --depth 1 --branch "v$V" https://github.com/leptris/yeptris "$WORK/yeptris-c"
 fi
 rm -rf "$WORK/yeptris-c/build"
 if [ "$IS_WINDOWS" = "1" ] && [ "$(ruby -e 'print Gem::Platform.local.to_s' 2>/dev/null)" = "x64-mingw32" ]; then
@@ -89,7 +89,7 @@ echo "::group::Build the extension (relative rpath)"
 # a pre-seeded checkout (the Windows legs build the per-minor native
 # DLLs in it before this script runs) is reused as-is
 if [ ! -d "$WORK/yeptris-ruby/.git" ]; then
-  git clone --quiet "$RUBY_REPO" "$WORK/yeptris-ruby"
+  git clone --quiet -c core.autocrlf=false -c core.eol=lf "$RUBY_REPO" "$WORK/yeptris-ruby"
 fi
 cd "$WORK/yeptris-ruby"
 # platform gems vendor the prebuilt lib: they must NOT register the
