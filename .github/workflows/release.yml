@@ -488,8 +488,57 @@ jobs:
           name: pkg-qemu-${{ matrix.name }}
           path: ${{ runner.temp }}/pgem-${{ matrix.name }}/**/*.gem
 
+  # The ruby-platform gem — the source variant (the leptris-ruby
+  # train's build-ruby leg): the engine's CMakeLists/cmake/src
+  # vendored into vendor/libyeptris, compiled by the gem's extension
+  # at install time. Covers every platform without a prebuilt binary
+  # (FreeBSD, source-first users, TruffleRuby-class rubies). The
+  # engine repo's flow built this variant until its trusted-publisher
+  # entry was retired — the gem's own train owns every variant now.
+  build-ruby:
+    needs: bump
+    if: always() && !cancelled() && !failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump.outputs.sha || github.ref }}
+
+      - uses: ruby/setup-ruby@master
+        with:
+          ruby-version: '3.3'
+          bundler-cache: false
+
+      - name: Vendor the engine sources at the lockstep tag
+        shell: bash
+        run: |
+          set -eux
+          git clone --quiet --depth 1 --branch "v${{ needs.bump.outputs.c_semver }}" \
+            https://github.com/leptris/yeptris "$RUNNER_TEMP/yeptris-c"
+          mkdir -p vendor/libyeptris
+          cp -R "$RUNNER_TEMP/yeptris-c/CMakeLists.txt" \
+                "$RUNNER_TEMP/yeptris-c/cmake" \
+                "$RUNNER_TEMP/yeptris-c/src" vendor/libyeptris/
+
+      - name: Build the ruby-platform gem
+        run: gem build yeptris.gemspec
+
+      - name: Smoke the source gem (install compiles the vendored engine)
+        run: |
+          set -eux
+          sudo apt-get update -qq && sudo apt-get install -y -qq cmake ninja-build >/dev/null
+          GEM="$(ls yeptris-*.gem | head -1)"
+          gem install --local --no-document "$GEM"
+          ruby -ryeptris -e 'abort "smoke" unless Yeptris::YAML.load("a: [1, 2]") == { "a" => [1, 2] }; puts "SMOKE PASS yeptris ruby-platform"'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkg-ruby-platform
+          path: yeptris-*.gem
+
   publish:
-    needs: [bump, build-native, build-musl, build-qemu]
+    needs: [bump, build-native, build-musl, build-qemu, build-ruby]
     # a SKIPPED bump (empty input) is valid (#215): only failure stops
     # the train
     if: always() && !cancelled() && !failure() && needs.bump.result != 'failure'
