@@ -529,7 +529,12 @@ jobs:
           set -eux
           sudo apt-get update -qq && sudo apt-get install -y -qq cmake ninja-build >/dev/null
           GEM="$(ls yeptris-*.gem | head -1)"
-          gem install --local --no-document "$GEM"
+          # the musl/qemu smoke lesson (#239/#242): gem install --local
+          # cannot resolve the runtime deps remotely on the runners —
+          # install ffi first, then the gem without dependency
+          # resolution
+          gem install ffi --no-document
+          gem install --local --no-document --ignore-dependencies "$GEM"
           ruby -ryeptris -e 'abort "smoke" unless Yeptris::YAML.load("a: [1, 2]") == { "a" => [1, 2] }; puts "SMOKE PASS yeptris ruby-platform"'
 
       - uses: actions/upload-artifact@v4
