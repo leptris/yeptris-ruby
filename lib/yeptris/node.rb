@@ -394,6 +394,19 @@ class Yeptris::Node
   def scalar_to_ruby
     return symbolize if symbol? && tag_id == :str
 
+    # !ruby/symbol (#258): psych deserializes the scalar to a Symbol
+    # (both spellings; safety is walk_safe's permitted_classes gate)
+    if tag == "!ruby/symbol" || tag == "tag:ruby.yaml.org,2002:symbol"
+      return value.to_s.to_sym
+    end
+
+    # scanner-coercion primitives (psych's ClassLoader-free path)
+    case tag
+    when "!ruby/string", "tag:ruby.yaml.org,2002:string" then return value.to_s
+    when "!ruby/integer", "tag:ruby.yaml.org,2002:integer" then return value.to_i
+    when "!ruby/float", "tag:ruby.yaml.org,2002:float" then return value.to_f
+    end
+
     # stdlib deserialize's tagged-scalar arms: the class tag carries
     # DateTime (dumped tagged — a plain timestamp re-loads as Time)
     if tag == "!ruby/object:DateTime"

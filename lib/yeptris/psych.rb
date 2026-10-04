@@ -401,6 +401,42 @@ module Yeptris
       PERMITTED_BY_DEFAULT = [TrueClass, FalseClass, NilClass, Integer, Float,
                               String, Array, Hash].freeze
 
+      CORE_TAGS = %w[str int float bool null timestamp seq map merge value
+                     binary].freeze
+
+      # Both tag spellings to the "ruby/…" short form: the engine may
+      # hand either the "!ruby/symbol" shorthand or the
+      # "tag:ruby.yaml.org,2002:…" URI spelling.
+      def ruby_tag_short(tag)
+        t = tag.sub(/\A!/, "")
+        return t if t.start_with?("ruby/")
+        t.sub(/\Atag:ruby\.yaml\.org,2002:/, "ruby/")
+      end
+
+      # psych's scanner coercion path — always allowed, no class
+      # loader involved (verified against stdlib: !ruby/string with no
+      # permitted_classes loads fine)
+      RUBY_TAG_PRIMITIVES = %w[ruby/string ruby/integer ruby/float].freeze
+
+      # The class a !ruby/… tag names (psych's resolve_class face):
+      # "ruby/symbol" → Symbol; "ruby/object:Foo" and the collection
+      # forms "ruby/hash:Foo" name Foo. Nil = not a class-shaped ruby
+      # tag (or unresolvable) — the caller raises DisallowedClass.
+      RUBY_TAG_SINGLETONS = {
+        "ruby/symbol" => ::Symbol,
+      }.freeze
+
+      def ruby_tag_class(short)
+        return RUBY_TAG_SINGLETONS[short] if RUBY_TAG_SINGLETONS.key?(short)
+
+        rest = short[/\Aruby\/(?:object|hash|array|struct|exception)(?::(.*))?\z/, 1]
+        return nil if rest.nil? || rest.empty?
+        rest.split("::").inject(Object) do |mod, part|
+          return nil unless mod.const_defined?(part, false)
+          mod.const_get(part, false)
+        end
+      end
+
       def check(node, permitted, aliases_enabled)
         case node.kind
         when :alias
@@ -411,9 +447,19 @@ module Yeptris
             # both tag spellings pass: the URI form's last segment and
             # the short "!binary" shorthand (#168's cassettes carry it)
             name = tag.split(":").last.sub(/\A!/, "")
-            unless %w[str int float bool null timestamp seq map merge value
-                      binary].include?(name)
-              raise DisallowedClass, name
+            unless CORE_TAGS.include?(name)
+              # #258: !ruby/… tags follow psych's ClassLoader rules —
+              # the scalar primitives (string/integer/float) coerce
+              # through the scanner and are allowed as-is; !ruby/symbol
+              # passes exactly when Symbol is in permitted_classes;
+              # class-bearing forms (ruby/object:K, ruby/hash:K, …)
+              # pass when K is in permitted_classes
+              short = ruby_tag_short(tag)
+              unless RUBY_TAG_PRIMITIVES.include?(short)
+                klass = ruby_tag_class(short)
+                raise DisallowedClass, name if klass.nil?
+                raise DisallowedClass, name unless permitted.include?(klass)
+              end
             end
           end
           if node.kind == :scalar && node.tag_id == :timestamp &&
