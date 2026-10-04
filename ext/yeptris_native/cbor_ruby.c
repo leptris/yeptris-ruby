@@ -183,7 +183,12 @@ VALUE yep_rb_cbor_load(const char* p, size_t len, int strict) {
     yep_cbor_sink sink = RV_SINK;
     sink.ctx = &ctx;
     st = yep_cbor_decode_gen((const unsigned char*)p, len, strict, NULL, &sink);
-    if (RTEST(gc_on)) {
+    /* rb_gc_disable returns Qfalse when GC was ON — enable exactly
+     * then (the old RTEST(gc_on) tested the inverted sense, so every
+     * CBOR load left GC permanently off; the Init self-check rides
+     * this path too, so one require disabled GC for the process —
+     * #259's linear RSS growth and never-running finalizers) */
+    if (gc_on == Qfalse) {
         rb_gc_enable();
     }
     if (st != YEPTRIS_OK) {
