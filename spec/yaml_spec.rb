@@ -15,6 +15,10 @@ RSpec.describe "BulkBuilder string_style mirrors Psych.dump" do
       "- lead", "k: v", "trail ", ":name", "-5", "?x", "a#b", "a #b", "",
       "with: colon", "0b1010", ".inf", ".nan", "safe", "1:2:3", "Z9_./x",
       "1.2.3", "1.2.3.4", "08", "09", "0777", "0x", "5014",
+      # leading-zero hours reshape under compat_11 (psych's
+      # ScalarScanner parses "07:00:00" plain as Integer — lutaml-model
+      # round-trips hit this); psych dumps them quoted
+      "07:00:00", "00:30", "09:59:59", "0:1",
     ]
     probes.each do |text|
       psych_text = Psych.dump(text)
@@ -28,6 +32,17 @@ RSpec.describe "BulkBuilder string_style mirrors Psych.dump" do
         end
       expect(Yeptris::YAML::BulkBuilder.string_style(text))
         .to eq(psych_style), "#{text.inspect}: Psych says #{psych_style}"
+    end
+  end
+end
+
+RSpec.describe "leading-zero sexagesimal round-trip (compat_11)" do
+  it "preserves String through dump+load" do
+    ["07:00:00", "00:30", "09:59:59"].each do |text|
+      dumped = Yeptris::YAML.dump({"k" => text})
+      reloaded = Yeptris::YAML.load(dumped, schema: :compat_11)["k"]
+      expect(reloaded).to eq(text), "#{text.inspect} reloaded as #{reloaded.inspect} from #{dumped.inspect}"
+      expect(reloaded).to be_a(String)
     end
   end
 end
