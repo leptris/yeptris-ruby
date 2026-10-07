@@ -269,12 +269,16 @@ module Yeptris
         return false if "-?:".include?(c) && (s.length == 1 || s[1] =~ /[ \t]/)
         return false if s.include?(": ") || s.end_with?(":") || s.include?(" #")
         return false if RESHAPES_SET[s]
-        # compat's float grammar REQUIRES the dot ("1e3" re-reads as a
-        # String and may dump plain); ints/sexagesimals still reshape.
-        # psych's FLOAT has no trailing [.:] group — "1.2.3" is a
-        # String and dumps plain (pinned by spec/yaml_spec.rb)
-        return false if s.match?(/\A[-+]?(0|[1-9][0-9_]*)(:[0-5]?[0-9])+\z/)
+        # ints/sexagesimals reshape: the compat resolver accepts any
+        # digit start (compat11.c), psych's ScalarScanner likewise —
+        # "07:00:00" plain re-reads as Integer, so leading-zero hours
+        # quote too (psych dumps them quoted)
+        return false if s.match?(/\A[-+]?[0-9][0-9_]*(:[0-5]?[0-9])+\z/)
         return false if s.match?(/\A[-+]?(0|[1-9][0-9_]*)\z/)
+        # compat's float grammar REQUIRES the dot ("1e3" re-reads as a
+        # String and may dump plain); psych's FLOAT has no trailing
+        # [.:] group — "1.2.3" is a String and dumps plain (pinned by
+        # spec/yaml_spec.rb)
         return false if s.match?(/\A[-+]?[0-9][0-9_]*\.[0-9_]*([eE][-+]?[0-9]+)?\z/)
         return false if s.match?(/\A[-+]?[0-9][0-9_]*(:[0-5]?[0-9])+\.[0-9_]*\z/)
         return false if s.match?(/\A[-+]?(0x[0-9a-fA-F_]+|0b[01_]+|0o?[0-7_]+)\z/)
