@@ -263,7 +263,7 @@ module Yeptris
           return true
         end
         return false if s.empty? || s != s.strip
-        return false if s.match?(/[\n\t]/)
+        return false if s.match?(/[\n\t\u0085\u2028\u2029\uFEFF]/)
         c = s[0]
         return false if "#,[]{}&*!|>'\"%@`".include?(c)
         return false if "-?:".include?(c) && (s.length == 1 || s[1] =~ /[ \t]/)
@@ -309,7 +309,12 @@ module Yeptris
         return :double if !s.empty? && !s.include?('"') && s.match?(/\A[^[:word:]]/)
         return :single if s.match?(/\A0[0-7]*[89]/)
         return :plain if plain_string?(s)
+        # the Unicode breaks are YAML breaks like \n (raw, re-parse
+        # folds them) and U+FEFF raw is the BOM (re-parse strips it) —
+        # only the double-quoted escapes carry them byte-stably; psych
+        # double-quotes them all (Psych.dump("b\u0085c") == "b\\Nb")
         return :double if s.each_byte.any? { |b| b < 0x20 || b == 0x7f }
+        return :double if s.match?(/[\u0085\u2028\u2029\uFEFF]/)
         :single
       end
 

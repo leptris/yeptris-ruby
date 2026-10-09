@@ -46,3 +46,26 @@ RSpec.describe "leading-zero sexagesimal round-trip (compat_11)" do
     end
   end
 end
+
+RSpec.describe "Unicode break/BOM strings dump byte-stably (C #494-#497)" do
+  it "escapes NEL/LS/PS/FEFF instead of emitting them raw" do
+    cases = {
+      "b\u0085c" => "\"b\\Nc\"\n",
+      "x\u2028y" => "\"x\\Ly\"\n",
+      "p\u2029q" => "\"p\\Pq\"\n",
+      "a\uFEFFb" => "\"a\\uFEFFb\"\n",
+    }
+    cases.each do |value, want|
+      dumped = Yeptris::YAML.dump(value)
+      expect(dumped).to eq(want), "#{value.inspect} dumped as #{dumped.inspect}"
+      reloaded = Yeptris::YAML.load(dumped)
+      expect(reloaded).to eq(value)
+      expect(Yeptris::YAML.dump(reloaded)).to eq(want), "unstable round-trip"
+    end
+  end
+
+  it "keeps plain values plain (no over-quoting)" do
+    expect(Yeptris::YAML.dump("hello world")).to eq("hello world\n")
+    expect(Yeptris::YAML.dump({ "k" => "07:00:00" })).to include("'07:00:00'")
+  end
+end
