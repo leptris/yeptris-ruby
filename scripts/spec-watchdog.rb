@@ -27,8 +27,9 @@ end
 thr = Thread.new do
   # rspec's progress dots block-buffer when stdout is a pipe (no tty) —
   # line-buffer the child so output actually streams to the watchdog
-  cmd = RUBY_PLATFORM =~ /mingw|mswin/ ? %w[bundle exec rspec --format progress]
-                                       : %w[stdbuf -oL bundle exec rspec --format progress]
+  hb = File.expand_path("#{__dir__}/spec-heartbeat.rb")
+  cmd = RUBY_PLATFORM =~ /mingw|mswin/ ? ["bundle", "exec", "rspec", "--format", "progress", "-r", hb]
+                                       : ["stdbuf", "-oL", "bundle", "exec", "rspec", "--format", "progress", "-r", hb]
   Open3.popen3(*cmd) do |i, o, e, w|
     @pid = w.pid
     o.each_line do |line|
@@ -56,6 +57,7 @@ loop do
       next
     end
     puts "\n[watchdog] NO OUTPUT FOR #{STALL}s AND CPU STALLED (#{cpu1} -> #{cpu2}) — last line: #{last_line.inspect}"
+    puts "[watchdog] NOTE: no [heartbeat] dump above means the child could not run Ruby code — blocked in C/FFI holding the GVL"
     puts "[watchdog] ruby threads of THIS process (parent):"
     Thread.list.each do |t|
       puts "--- #{t} ---"
