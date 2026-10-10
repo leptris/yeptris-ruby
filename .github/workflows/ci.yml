@@ -125,6 +125,15 @@ jobs:
           fi
           ruby scripts/spec-watchdog.rb
 
+      - name: Save hang evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hang-evidence-${{ matrix.os }}-${{ github.run_id }}
+          path: hang-*.dmp
+          if-no-files-found: ignore
+          retention-days: 14
+
   # TODO.restructure/34/36: the JSON comparison profile — the referee.
   # Modes run in SEPARATE processes (env at load); the table prints on
   # every CI run. The gate threshold comes from the evidence and is
