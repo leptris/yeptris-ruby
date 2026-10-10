@@ -123,7 +123,7 @@ jobs:
           else
             export YEPTRIS_LIB_PATH="$YEPTRIS_LIB"
           fi
-          bundle exec rspec
+          ruby scripts/spec-watchdog.rb
 
   # TODO.restructure/34/36: the JSON comparison profile — the referee.
   # Modes run in SEPARATE processes (env at load); the table prints on
