@@ -6,12 +6,16 @@
 # stalls, then prints Thread.list backtraces to stderr and exits.
 $stdout.sync = true
 $stderr.sync = true
-STALL = Integer(ENV.fetch("SPEC_WATCHDOG_STALL", "120"))
+STALL = Integer(ENV.fetch("SPEC_WATCHDOG_STALL", "600"))
 require "open3"
 last_line = nil
 last_at = Time.now
 thr = Thread.new do
-  Open3.popen3("bundle", "exec", "rspec", "--format", "progress") do |i, o, e, w|
+  # rspec's progress dots block-buffer when stdout is a pipe (no tty) —
+  # line-buffer the child so output actually streams to the watchdog
+  cmd = RUBY_PLATFORM =~ /mingw|mswin/ ? %w[bundle exec rspec --format progress]
+                                       : %w[stdbuf -oL bundle exec rspec --format progress]
+  Open3.popen3(*cmd) do |i, o, e, w|
     o.each_line do |line|
       print line
       last_line = line
