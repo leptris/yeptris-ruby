@@ -10,12 +10,27 @@ STALL = Integer(ENV.fetch("SPEC_WATCHDOG_STALL", "600"))
 require "open3"
 last_line = nil
 last_at = Time.now
+
+# A stall is only a hang when the child also stops burning CPU: slow
+# runners (arm) legitimately sit 10+ min between output lines at full
+# tilt.  posix: ps -o time; windows: Get-Process CPU.
+def child_cpu(pid)
+  if RUBY_PLATFORM =~ /mingw|mswin/
+    out = `powershell -Command "(Get-Process -Id #{pid} -ErrorAction SilentlyContinue).CPU"`.to_f
+  else
+    out = `ps -o times= -p #{pid} 2>/dev/null`.to_i
+  end
+  out
+rescue StandardError
+  -1
+end
 thr = Thread.new do
   # rspec's progress dots block-buffer when stdout is a pipe (no tty) —
   # line-buffer the child so output actually streams to the watchdog
   cmd = RUBY_PLATFORM =~ /mingw|mswin/ ? %w[bundle exec rspec --format progress]
                                        : %w[stdbuf -oL bundle exec rspec --format progress]
   Open3.popen3(*cmd) do |i, o, e, w|
+    @pid = w.pid
     o.each_line do |line|
       print line
       last_line = line
@@ -30,7 +45,17 @@ end
 loop do
   break unless thr.alive?
   if Time.now - last_at > STALL
-    puts "\n[watchdog] NO OUTPUT FOR #{STALL}s — last line: #{last_line.inspect}"
+    pid = @pid || -1
+    cpu1 = child_cpu(pid)
+    sleep 10
+    cpu2 = child_cpu(pid)
+    if cpu1 >= 0 && cpu2 >= cpu1 + 2
+      # still burning CPU: a slow run, not a hang — reset and continue
+      last_at = Time.now
+      puts "[watchdog] quiet #{STALL}s but CPU advanced #{cpu2 - cpu1}s — slow run, continuing"
+      next
+    end
+    puts "\n[watchdog] NO OUTPUT FOR #{STALL}s AND CPU STALLED (#{cpu1} -> #{cpu2}) — last line: #{last_line.inspect}"
     puts "[watchdog] ruby threads of THIS process (parent):"
     Thread.list.each do |t|
       puts "--- #{t} ---"
