@@ -142,6 +142,63 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # DIAG #504 round 11: full page heap on ruby.exe. Round 10's double
+  # minidump: the main thread frozen (identical RIP/RSP 30s apart) in
+  # RtlEnterCriticalSection under ffi_c malloc — a corrupted or orphaned
+  # heap lock; the corruption happened EARLIER and surfaces at the next
+  # allocation. Page heap turns the corrupting WRITE into an instant AV
+  # with the culprit stack (DLL+PDB ride the artifact). No GC.stress
+  # (round 10 exonerated it; the hang reproduces without).
+  churn-pageheap:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - uses: actions/checkout@v4
+        with:
+          repository: leptris/yeptris
+          path: libyeptris-src
+      - name: Build the engine DLL (Release + PDB)
+        shell: bash
+        run: |
+          cmake -S libyeptris-src -B libyeptris-src/build -G "Visual Studio 17 2022" \
+            -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build --config Release
+      - name: Enable full page heap for ruby.exe (IFEO)
+        shell: pwsh
+        run: |
+          $k = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\ruby.exe"
+          New-Item -Path $k -Force | Out-Null
+          Set-ItemProperty -Path $k -Name GlobalFlag -Value 0x02000000 -Type DWord
+          Set-ItemProperty -Path $k -Name PageHeapFlags -Value 0x3 -Type DWord
+          "page heap armed for ruby.exe"
+      - name: Run the churn spec under page heap
+        shell: bash
+        env:
+          YEP_CHURN_NO_STRESS: "1"
+        run: |
+          export YEPTRIS_LIB_PATH="$PWD/libyeptris-src/build/src/Release/libyeptris.dll"
+          for i in $(seq 1 30); do
+            echo "churn round $i"
+            bundle exec rspec spec/ownership_churn_spec.rb --format progress || exit 1
+          done
+      - name: Save hang evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pageheap-evidence-${{ github.run_id }}
+          path: |
+            hang-*.dmp
+            libyeptris-src/build/src/Release/*.dll
+            libyeptris-src/build/src/Release/*.pdb
+          if-no-files-found: ignore
+          retention-days: 14
+
   # TODO.restructure/34/36: the JSON comparison profile — the referee.
   # Modes run in SEPARATE processes (env at load); the table prints on
   # every CI run. The gate threshold comes from the evidence and is
