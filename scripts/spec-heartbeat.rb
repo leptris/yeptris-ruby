@@ -32,6 +32,7 @@ if defined?(RSpec)
 end
 
 Thread.new do
+  $stderr.puts "[heartbeat] watcher thread started"
   loop do
     sleep 10
     at, what, dumps = HEARTBEAT_MU.synchronize { [HEARTBEAT_STATE[:at], HEARTBEAT_STATE[:what], HEARTBEAT_STATE[:dumps]] }

@@ -87,6 +87,13 @@ loop do
           system("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
                  File.expand_path("#{__dir__}/win-hang-dump.ps1"), "-ProcId", pid.to_s,
                  "-OutPrefix", prefix)
+          # a second dump 30s later: identical RIPs = truly frozen;
+          # moving = spinning/racing (a single snapshot cannot tell)
+          sleep 30
+          puts "[watchdog] second dump (frozen-vs-moving differential)"
+          system("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                 File.expand_path("#{__dir__}/win-hang-dump.ps1"), "-ProcId", pid.to_s,
+                 "-OutPrefix", prefix + "-b")
         end
         puts "[watchdog] killing the child tree and failing"
         if RUBY_PLATFORM =~ /mingw|mswin/
