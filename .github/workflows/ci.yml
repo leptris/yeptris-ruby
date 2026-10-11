@@ -123,7 +123,246 @@ jobs:
           else
             export YEPTRIS_LIB_PATH="$YEPTRIS_LIB"
           fi
-          bundle exec rspec
+          if [ "$(uname -s)" = "MINGW" ] || [ "$(uname -s)" = "MSYS" ]; then
+            export YEP_CHURN_NO_STRESS=1 # DIAG #504: isolate GC.stress as the stall trigger
+          fi
+          ruby scripts/spec-watchdog.rb
+
+      - name: Save hang evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hang-evidence-${{ matrix.os }}-${{ github.run_id }}
+          path: |
+            hang-*.dmp
+            libyeptris-src/build/src/Release/*.dll
+            libyeptris-src/build/src/Release/*.pdb
+            libyeptris-src/build/bin/Release/*.dll
+            libyeptris-src/build/bin/Release/*.pdb
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # DIAG #504 round 11: full page heap on ruby.exe. Round 10's double
+  # minidump: the main thread frozen (identical RIP/RSP 30s apart) in
+  # RtlEnterCriticalSection under ffi_c malloc — a corrupted or orphaned
+  # heap lock; the corruption happened EARLIER and surfaces at the next
+  # allocation. Page heap turns the corrupting WRITE into an instant AV
+  # with the culprit stack (DLL+PDB ride the artifact). No GC.stress
+  # (round 10 exonerated it; the hang reproduces without).
+  churn-pageheap:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - uses: actions/checkout@v4
+        with:
+          repository: leptris/yeptris
+          path: libyeptris-src
+      - name: Build the engine DLL (Release + PDB)
+        shell: bash
+        run: |
+          cmake -B libyeptris-src/build -S libyeptris-src \
+            -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build --config Release
+          DLL="$( (ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null || true) | head -1)"
+          test -n "$DLL"
+          cp "$DLL" "$GITHUB_WORKSPACE/libyeptris.dll"
+      - name: Enable full page heap for ruby.exe (IFEO)
+        shell: pwsh
+        run: |
+          $k = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\ruby.exe"
+          New-Item -Path $k -Force | Out-Null
+          Set-ItemProperty -Path $k -Name GlobalFlag -Value 0x02000000 -Type DWord
+          Set-ItemProperty -Path $k -Name PageHeapFlags -Value 0x3 -Type DWord
+          "page heap armed for ruby.exe"
+      - name: Run the churn spec under page heap
+        shell: bash
+        env:
+          YEP_CHURN_NO_STRESS: "1"
+        run: |
+          export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris.dll"
+          for i in $(seq 1 30); do
+            echo "churn round $i"
+            bundle exec rspec spec/ownership_churn_spec.rb --format progress || exit 1
+          done
+      - name: Save hang evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pageheap-evidence-${{ github.run_id }}
+          path: |
+            hang-*.dmp
+            libyeptris-src/build/src/Release/*.dll
+            libyeptris-src/build/src/Release/*.pdb
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # DIAG #504 round 12 — the control cell. The pageheap leg ran 30/30
+  # green (no AV, no hang) with: GC.stress off, NO heartbeat thread,
+  # page heap on. Known-hanging cells: GC.stress on + no heartbeat
+  # (PR #271), GC.stress off + heartbeat (round 10). This leg tests the
+  # one untested neighbor: GC.stress off + no heartbeat + NO page heap
+  # — isolating whether page heap's allocator layout is what prevents
+  # the hang. If green 30x, the mechanism is layout/timing-sensitive
+  # heap damage (page heap hides it by construction); if it hangs, the
+  # trigger is neither GC.stress nor the heartbeat instrumentation.
+  churn-plain:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - uses: actions/checkout@v4
+        with:
+          repository: leptris/yeptris
+          path: libyeptris-src
+      - name: Build the engine DLL (Release + PDB)
+        shell: bash
+        run: |
+          cmake -B libyeptris-src/build -S libyeptris-src \
+            -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build --config Release
+          DLL="$( (ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null || true) | head -1)"
+          test -n "$DLL"
+          cp "$DLL" "$GITHUB_WORKSPACE/libyeptris.dll"
+      - name: Run the churn spec plain, 30x (no page heap, no heartbeat)
+        shell: bash
+        env:
+          YEP_CHURN_NO_STRESS: "1"
+        run: |
+          export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris.dll"
+          for i in $(seq 1 30); do
+            echo "churn round $i"
+            timeout 300 bundle exec rspec spec/ownership_churn_spec.rb --format progress || exit 1
+          done
+
+  # DIAG #504 round 13 — the two discriminator cells. Known matrix:
+  #   full suite + watchdog + heartbeat + GC.stress ON  -> hang (rounds 5-9, PR #271)
+  #   full suite + watchdog + heartbeat + GC.stress OFF -> hang (round 10)
+  #   churn only + no instr + GC.stress OFF, page heap   -> green 30x
+  #   churn only + no instr + GC.stress OFF, plain heap  -> green 30x (control)
+  # Remaining variables between the hanging and green cells: the
+  # heartbeat thread, the watchdog Open3 wrapper, and the full-suite
+  # context (specs preceding the churn spec). These legs split them.
+  churn-heartbeat:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - uses: actions/checkout@v4
+        with:
+          repository: leptris/yeptris
+          path: libyeptris-src
+      - name: Build the engine DLL (Release + PDB)
+        shell: bash
+        run: |
+          cmake -B libyeptris-src/build -S libyeptris-src \
+            -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build --config Release
+          DLL="$( (ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null || true) | head -1)"
+          test -n "$DLL"
+          cp "$DLL" "$GITHUB_WORKSPACE/libyeptris.dll"
+      - name: Churn spec 30x with the heartbeat thread (no watchdog)
+        shell: bash
+        env:
+          YEP_CHURN_NO_STRESS: "1"
+        run: |
+          export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris.dll"
+          for i in $(seq 1 30); do
+            echo "churn round $i"
+            timeout 300 bundle exec rspec spec/ownership_churn_spec.rb --format progress -r ./scripts/spec-heartbeat.rb || exit 1
+          done
+  suite-plain:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - uses: actions/checkout@v4
+        with:
+          repository: leptris/yeptris
+          path: libyeptris-src
+      - name: Build the engine DLL (Release + PDB)
+        shell: bash
+        run: |
+          cmake -B libyeptris-src/build -S libyeptris-src \
+            -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build --config Release
+          DLL="$( (ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null || true) | head -1)"
+          test -n "$DLL"
+          cp "$DLL" "$GITHUB_WORKSPACE/libyeptris.dll"
+      - name: Full suite 3x, no heartbeat, no watchdog (GC.stress off)
+        shell: bash
+        env:
+          YEP_CHURN_NO_STRESS: "1"
+        run: |
+          export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris.dll"
+          for i in 1 2 3; do
+            echo "suite round $i"
+            timeout 1200 bundle exec rspec --format progress || exit 1
+          done
+
+  # DIAG #504 round 14 — the last discriminator cell. Matrix so far:
+  #   full suite + watchdog + heartbeat (stress off)      -> HANG (round 10)
+  #   churn only + heartbeat (stress off)                 -> green 30x
+  #   full suite + no instr (stress off)                  -> no hang (2 spec
+  #     failures: chevron (fixed by #274+#536) + the known windows
+  #     Ractor flake; but only ~1 round completed)
+  # This leg: full suite + heartbeat, no watchdog — does the COMBINATION
+  # reproduce the hang? If yes, the delta vs churn-heartbeat is the
+  # preceding specs' process state; if no, the watchdog Open3 wrapper
+  # joins the recipe.
+  suite-heartbeat:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - uses: actions/checkout@v4
+        with:
+          repository: leptris/yeptris
+          path: libyeptris-src
+      - name: Build the engine DLL (Release + PDB)
+        shell: bash
+        run: |
+          cmake -B libyeptris-src/build -S libyeptris-src \
+            -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build --config Release
+          DLL="$( (ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null || true) | head -1)"
+          test -n "$DLL"
+          cp "$DLL" "$GITHUB_WORKSPACE/libyeptris.dll"
+      - name: Full suite 3x with the heartbeat thread (no watchdog)
+        shell: bash
+        env:
+          YEP_CHURN_NO_STRESS: "1"
+        run: |
+          export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris.dll"
+          for i in 1 2 3; do
+            echo "suite round $i"
+            timeout 1200 bundle exec rspec --format progress -r ./scripts/spec-heartbeat.rb || exit 1
+          done
 
   # TODO.restructure/34/36: the JSON comparison profile — the referee.
   # Modes run in SEPARATE processes (env at load); the table prints on

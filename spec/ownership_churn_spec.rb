@@ -25,7 +25,11 @@ RSpec.describe "document ownership under churn (#182)" do
     # finalizer race window is maximized. A double free or a
     # use-after-free is a hard abort (trap 6 / SIGSEGV), not a
     # soft failure the expect can catch.
-    ::GC.stress = true
+    # DIAG #504: the stress flag is the remaining trigger suspect —
+    # the post-#273 hang's last Ruby frame is a plain assignment inside
+    # Node#initialize (no FFI), pointing at the allocator/GC layer.
+    # YEP_CHURN_NO_STRESS=1 disables it for one controlled experiment.
+    ::GC.stress = !ENV.key?("YEP_CHURN_NO_STRESS")
     begin
       80.times do
         tree = ::Psych.parse(DOC)
