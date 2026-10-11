@@ -165,10 +165,13 @@ jobs:
       - name: Build the engine DLL (Release + PDB)
         shell: bash
         run: |
-          cmake -S libyeptris-src -B libyeptris-src/build -G "Visual Studio 17 2022" \
-            -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
+          cmake -B libyeptris-src/build -S libyeptris-src \
+            -DYEPTRIS_BUILD_TESTING=OFF \
             -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
           cmake --build libyeptris-src/build --config Release
+          DLL="$( (ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null || true) | head -1)"
+          test -n "$DLL"
+          cp "$DLL" "$GITHUB_WORKSPACE/libyeptris.dll"
       - name: Enable full page heap for ruby.exe (IFEO)
         shell: pwsh
         run: |
@@ -182,7 +185,7 @@ jobs:
         env:
           YEP_CHURN_NO_STRESS: "1"
         run: |
-          export YEPTRIS_LIB_PATH="$PWD/libyeptris-src/build/src/Release/libyeptris.dll"
+          export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris.dll"
           for i in $(seq 1 30); do
             echo "churn round $i"
             bundle exec rspec spec/ownership_churn_spec.rb --format progress || exit 1
