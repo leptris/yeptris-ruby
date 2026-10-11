@@ -82,10 +82,11 @@ loop do
           system("ps -ef | grep -E 'rspec|ruby' | grep -v grep")
         end
         if RUBY_PLATFORM =~ /mingw|mswin/
-          dump = File.expand_path("hang-#{pid}.dmp")
-          puts "[watchdog] writing minidump of the hung child (#{pid})"
+          prefix = File.expand_path("hang")
+          puts "[watchdog] writing minidumps of the hung ruby tree (root #{pid})"
           system("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-                 File.expand_path("#{__dir__}/win-hang-dump.ps1"), "-ProcId", pid.to_s, "-Out", dump)
+                 File.expand_path("#{__dir__}/win-hang-dump.ps1"), "-ProcId", pid.to_s,
+                 "-OutPrefix", prefix)
         end
         puts "[watchdog] killing the child tree and failing"
         if RUBY_PLATFORM =~ /mingw|mswin/
