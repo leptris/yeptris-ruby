@@ -123,6 +123,9 @@ jobs:
           else
             export YEPTRIS_LIB_PATH="$YEPTRIS_LIB"
           fi
+          if [ "$(uname -s)" = "MINGW" ] || [ "$(uname -s)" = "MSYS" ]; then
+            export YEP_CHURN_NO_STRESS=1 # DIAG #504: isolate GC.stress as the stall trigger
+          fi
           ruby scripts/spec-watchdog.rb
 
       - name: Save hang evidence
