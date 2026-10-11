@@ -216,7 +216,7 @@ module Yeptris
               # explicit !!str tag (single-quoted) so it does not
               # re-load as a merge
               key_node = @tree.new_scalar("<<", :single_quoted)
-              key_node.set_tag("!!str")
+              key_node.set_tag("tag:yaml.org,2002:str")
               m.map_add_node(key_node, visit(v))
             else
               m.map_add(key_text(k), visit(v))

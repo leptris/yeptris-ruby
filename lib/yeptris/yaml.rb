@@ -364,7 +364,7 @@ module Yeptris
               # stdlib yaml_tree: a literal chevron key carries the
               # explicit !!str tag so it does not re-load as a merge
               key_node = doc.new_scalar("<<", :single_quoted)
-              key_node.set_tag("!!str")
+              key_node.set_tag("tag:yaml.org,2002:str")
               m.map_add_node(key_node, build(doc, v, seen))
             else
               m.map_add(key_text(k), build(doc, v, seen))
