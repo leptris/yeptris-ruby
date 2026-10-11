@@ -245,6 +245,81 @@ jobs:
             timeout 300 bundle exec rspec spec/ownership_churn_spec.rb --format progress || exit 1
           done
 
+  # DIAG #504 round 13 — the two discriminator cells. Known matrix:
+  #   full suite + watchdog + heartbeat + GC.stress ON  -> hang (rounds 5-9, PR #271)
+  #   full suite + watchdog + heartbeat + GC.stress OFF -> hang (round 10)
+  #   churn only + no instr + GC.stress OFF, page heap   -> green 30x
+  #   churn only + no instr + GC.stress OFF, plain heap  -> green 30x (control)
+  # Remaining variables between the hanging and green cells: the
+  # heartbeat thread, the watchdog Open3 wrapper, and the full-suite
+  # context (specs preceding the churn spec). These legs split them.
+  churn-heartbeat:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - uses: actions/checkout@v4
+        with:
+          repository: leptris/yeptris
+          path: libyeptris-src
+      - name: Build the engine DLL (Release + PDB)
+        shell: bash
+        run: |
+          cmake -B libyeptris-src/build -S libyeptris-src \
+            -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build --config Release
+          DLL="$( (ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null || true) | head -1)"
+          test -n "$DLL"
+          cp "$DLL" "$GITHUB_WORKSPACE/libyeptris.dll"
+      - name: Churn spec 30x with the heartbeat thread (no watchdog)
+        shell: bash
+        env:
+          YEP_CHURN_NO_STRESS: "1"
+        run: |
+          export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris.dll"
+          for i in $(seq 1 30); do
+            echo "churn round $i"
+            timeout 300 bundle exec rspec spec/ownership_churn_spec.rb --format progress -r ./scripts/spec-heartbeat.rb || exit 1
+          done
+  suite-plain:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - uses: actions/checkout@v4
+        with:
+          repository: leptris/yeptris
+          path: libyeptris-src
+      - name: Build the engine DLL (Release + PDB)
+        shell: bash
+        run: |
+          cmake -B libyeptris-src/build -S libyeptris-src \
+            -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build --config Release
+          DLL="$( (ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null || true) | head -1)"
+          test -n "$DLL"
+          cp "$DLL" "$GITHUB_WORKSPACE/libyeptris.dll"
+      - name: Full suite 3x, no heartbeat, no watchdog (GC.stress off)
+        shell: bash
+        env:
+          YEP_CHURN_NO_STRESS: "1"
+        run: |
+          export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris.dll"
+          for i in 1 2 3; do
+            echo "suite round $i"
+            timeout 1200 bundle exec rspec --format progress || exit 1
+          done
+
   # TODO.restructure/34/36: the JSON comparison profile — the referee.
   # Modes run in SEPARATE processes (env at load); the table prints on
   # every CI run. The gate threshold comes from the evidence and is
