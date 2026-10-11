@@ -202,6 +202,49 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # DIAG #504 round 12 — the control cell. The pageheap leg ran 30/30
+  # green (no AV, no hang) with: GC.stress off, NO heartbeat thread,
+  # page heap on. Known-hanging cells: GC.stress on + no heartbeat
+  # (PR #271), GC.stress off + heartbeat (round 10). This leg tests the
+  # one untested neighbor: GC.stress off + no heartbeat + NO page heap
+  # — isolating whether page heap's allocator layout is what prevents
+  # the hang. If green 30x, the mechanism is layout/timing-sensitive
+  # heap damage (page heap hides it by construction); if it hangs, the
+  # trigger is neither GC.stress nor the heartbeat instrumentation.
+  churn-plain:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - uses: actions/checkout@v4
+        with:
+          repository: leptris/yeptris
+          path: libyeptris-src
+      - name: Build the engine DLL (Release + PDB)
+        shell: bash
+        run: |
+          cmake -B libyeptris-src/build -S libyeptris-src \
+            -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build --config Release
+          DLL="$( (ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null || true) | head -1)"
+          test -n "$DLL"
+          cp "$DLL" "$GITHUB_WORKSPACE/libyeptris.dll"
+      - name: Run the churn spec plain, 30x (no page heap, no heartbeat)
+        shell: bash
+        env:
+          YEP_CHURN_NO_STRESS: "1"
+        run: |
+          export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris.dll"
+          for i in $(seq 1 30); do
+            echo "churn round $i"
+            timeout 300 bundle exec rspec spec/ownership_churn_spec.rb --format progress || exit 1
+          done
+
   # TODO.restructure/34/36: the JSON comparison profile — the referee.
   # Modes run in SEPARATE processes (env at load); the table prints on
   # every CI run. The gate threshold comes from the evidence and is
