@@ -50,7 +50,7 @@ class Yeptris::Node
 
   # Scalar content / alias name (UTF-8 String), nil for collections.
   def value
-    len = ::FFI::MemoryPointer.new(:size_t)
+    len = len_buffer
     ptr = alive { Yeptris::FFI.yeptris_node_value(@c_ptr, len) }
     return nil if ptr.null?
 
@@ -69,9 +69,18 @@ class Yeptris::Node
     STYLES[alive { Yeptris::FFI.yeptris_node_style(@c_ptr) }]
   end
 
+  # The out-length receiver: ONE buffer per thread, reused. A fresh
+  # FFI::MemoryPointer per accessor call was an allocation storm that
+  # stalled the Windows heap under the #182 churn loop (the #504
+  # family — the hang's stack sits in FFI::MemoryPointer#initialize,
+  # node.rb anchor/tag reads inside Integer#times with GC.start).
+  def len_buffer
+    Thread.current[:yeptris_len_buf] ||= ::FFI::MemoryPointer.new(:size_t)
+  end
+
   # Explicit tag URI when present, else nil.
   def tag
-    len = ::FFI::MemoryPointer.new(:size_t)
+    len = len_buffer
     ptr = alive { Yeptris::FFI.yeptris_node_tag(@c_ptr, len) }
     return nil if ptr.null?
 
@@ -79,7 +88,7 @@ class Yeptris::Node
   end
 
   def anchor
-    len = ::FFI::MemoryPointer.new(:size_t)
+    len = len_buffer
     ptr = alive { Yeptris::FFI.yeptris_node_anchor(@c_ptr, len) }
     return nil if ptr.null?
 
