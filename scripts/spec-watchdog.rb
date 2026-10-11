@@ -40,12 +40,17 @@ thr = Thread.new do
                                        : ["stdbuf", "-oL", "bundle", "exec", "rspec", "--format", "progress", "-r", hb]
   Open3.popen3(*cmd) do |i, o, e, w|
     @pid = w.pid
+    # stderr drains CONCURRENTLY from the first byte: started after the
+    # stdout loop (the old order), the child's stderr — the heartbeat's
+    # backtrace dumps among it — sat in the pipe until exit and was
+    # destroyed by the kill, so five rounds of dumps never reached the
+    # log
+    err = Thread.new { e.each_line { |l| warn l } }
     o.each_line do |line|
       print line
       last_line = line
       last_at = Time.now
     end
-    err = Thread.new { e.each_line { |l| warn l } }
     err.join
     i.close
     @status = w.value
