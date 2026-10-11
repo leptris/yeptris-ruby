@@ -130,7 +130,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: hang-evidence-${{ matrix.os }}-${{ github.run_id }}
-          path: hang-*.dmp
+          path: |
+            hang-*.dmp
+            libyeptris-src/build/src/Release/*.dll
+            libyeptris-src/build/src/Release/*.pdb
+            libyeptris-src/build/bin/Release/*.dll
+            libyeptris-src/build/bin/Release/*.pdb
           if-no-files-found: ignore
           retention-days: 14
 
