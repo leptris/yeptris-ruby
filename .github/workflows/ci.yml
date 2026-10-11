@@ -320,6 +320,50 @@ jobs:
             timeout 1200 bundle exec rspec --format progress || exit 1
           done
 
+  # DIAG #504 round 14 — the last discriminator cell. Matrix so far:
+  #   full suite + watchdog + heartbeat (stress off)      -> HANG (round 10)
+  #   churn only + heartbeat (stress off)                 -> green 30x
+  #   full suite + no instr (stress off)                  -> no hang (2 spec
+  #     failures: chevron (fixed by #274+#536) + the known windows
+  #     Ractor flake; but only ~1 round completed)
+  # This leg: full suite + heartbeat, no watchdog — does the COMBINATION
+  # reproduce the hang? If yes, the delta vs churn-heartbeat is the
+  # preceding specs' process state; if no, the watchdog Open3 wrapper
+  # joins the recipe.
+  suite-heartbeat:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - uses: actions/checkout@v4
+        with:
+          repository: leptris/yeptris
+          path: libyeptris-src
+      - name: Build the engine DLL (Release + PDB)
+        shell: bash
+        run: |
+          cmake -B libyeptris-src/build -S libyeptris-src \
+            -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build --config Release
+          DLL="$( (ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null || true) | head -1)"
+          test -n "$DLL"
+          cp "$DLL" "$GITHUB_WORKSPACE/libyeptris.dll"
+      - name: Full suite 3x with the heartbeat thread (no watchdog)
+        shell: bash
+        env:
+          YEP_CHURN_NO_STRESS: "1"
+        run: |
+          export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris.dll"
+          for i in 1 2 3; do
+            echo "suite round $i"
+            timeout 1200 bundle exec rspec --format progress -r ./scripts/spec-heartbeat.rb || exit 1
+          done
+
   # TODO.restructure/34/36: the JSON comparison profile — the referee.
   # Modes run in SEPARATE processes (env at load); the table prints on
   # every CI run. The gate threshold comes from the evidence and is
