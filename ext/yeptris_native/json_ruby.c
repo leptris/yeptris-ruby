@@ -173,9 +173,19 @@ static VALUE jr_object(jr* j) {
 }
 
 static VALUE jr_object_body(jr* j, VALUE h_pre) {
+    /* The pairs staging buffer MUST live in GC-scanned memory: pairs
+     * beyond the current one exist only there once the key/val locals
+     * are reused, so a malloc'd buffer makes them invisible to the
+     * collector — it can free them mid-parse and recycle their slots,
+     * and rb_hash_bulk_insert then inserts garbage (yeptris-ruby#279:
+     * the arm64-darwin SIGSEGV whose fault address was document text).
+     * The stack array IS scanned, so the bulk fast path is bounded at
+     * 31 pairs; beyond that the buffered pairs flush with one
+     * bulk_insert and the rest of the object rides rb_hash_aset. */
     VALUE pairs[64];
     VALUE* pv = pairs;
     size_t pcap = 64, pn = 0, heap_cap = 0;
+    int aset_rest = 0;
     for (;;) {
         jr_ws(j);
         if (j->i >= j->len || j->p[j->i] != '"') { j->err = -2; goto out; }
@@ -186,7 +196,7 @@ static VALUE jr_object_body(jr* j, VALUE h_pre) {
         j->i++;
         VALUE val = jr_value(j);
         if (j->err) goto out;
-        if (yep_ins_mode == YEP_INS_ASET || j->strict_dup) {
+        if (yep_ins_mode == YEP_INS_ASET || j->strict_dup || aset_rest) {
             VALUE h = h_pre == Qundef ? (h_pre = HASH_NEW_CAPA(8)) : h_pre;
             if (j->strict_dup && !NIL_P(rb_hash_aref(h, key))) {
                 j->err = -3;
@@ -196,15 +206,21 @@ static VALUE jr_object_body(jr* j, VALUE h_pre) {
             rb_hash_aset(h, key, val);
         } else {
             if (pn + 2 > pcap) {
-                size_t ncap = pcap * 2;
-                VALUE* nv = malloc(ncap * sizeof(VALUE));
-                if (!nv) { j->err = -1; goto out; }
-                memcpy(nv, pv, pn * sizeof(VALUE));
-                if (pv != pairs) { free(pv); heap_cap = 1; }
-                pv = nv; pcap = ncap;
+                /* buffer full: flush what is staged (no heap staging —
+                 * see the #279 note above); THIS pair and the rest of
+                 * the object ride aset — no continue here, the
+                 * delimiter scan below must still run */
+                VALUE h = (h_pre == Qundef) ? (h_pre = HASH_NEW_CAPA((long)(pn / 2) + 8)) : h_pre;
+                rb_hash_bulk_insert((long)pn, (const VALUE*)pv, h);
+                pn = 0;
+                aset_rest = 1;
             }
-            pv[pn++] = key;
-            pv[pn++] = val;
+            if (aset_rest) {
+                rb_hash_aset(h_pre, key, val);
+            } else {
+                pv[pn++] = key;
+                pv[pn++] = val;
+            }
         }
         jr_ws(j);
         if (j->i >= j->len) { j->err = -2; goto out; }
@@ -351,7 +367,17 @@ double yep_rb_scan_time(const char* p, size_t len, int n) {
 VALUE yep_rb_parse_json(const char* p, size_t len, int strict_dup) {
     jr j;
     memset(&j, 0, sizeof(j));
-    j.p = p; j.len = len; j.enc = rb_utf8_encoding();
+    /* The parse holds j.p across unbounded allocations, and the GC
+     * strategy knobs leave collection ENABLED during the window
+     * (arm64's default is none). A compaction moving the source
+     * string would dangle every j->p read after the move
+     * (yeptris-ruby#279's heap-layout-dependent SIGSEGV class), so
+     * the parse runs on a private copy: one memcpy of the input,
+     * then no Ruby object backs the cursor. */
+    char* own = malloc(len ? len : 1);
+    if (own == NULL) rb_raise(rb_eNoMemError, "yeptris native json");
+    memcpy(own, p, len);
+    j.p = own; j.len = len; j.enc = rb_utf8_encoding();
     j.strict_dup = strict_dup;
     VALUE already = Qtrue;
     if (yep_gc_mode != YEP_GC_NONE) already = rb_gc_disable();
@@ -359,6 +385,7 @@ VALUE yep_rb_parse_json(const char* p, size_t len, int strict_dup) {
     jr_ws(&j);
     if (j.i != len && j.err == 0) j.err = -2;
     free(j.scratch);
+    free(own);
     if (already == Qfalse) rb_gc_enable();
     if (yep_gc_mode == YEP_GC_START && j.err == 0) rb_gc_start();
     if (j.err == -1) rb_raise(rb_eNoMemError, "yeptris native json");
@@ -366,6 +393,11 @@ VALUE yep_rb_parse_json(const char* p, size_t len, int strict_dup) {
         rb_raise(rb_path2class("Yeptris::ParseError"), "duplicate key \"%s\" in JSON object",
                  RSTRING_PTR(j.dup_key));
     }
-    if (j.err != 0) rb_raise(rb_path2class("Yeptris::ParseError"), "native json parse failed");
+    if (j.err != 0) {
+        /* the tape engine's wording ("not strict JSON at byte N") so
+         * consumers can pin one error shape across both routes
+         * (yeptris-ruby#279's adjacent note) */
+        rb_raise(rb_path2class("Yeptris::ParseError"), "not strict JSON at byte %zu", j.i);
+    }
     return v;
 }
