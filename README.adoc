@@ -5,6 +5,15 @@ https://github.com/leptris/yeptris[libyeptris] — the YAML counterpart
 of libleptris. Psych-compatible semantics, one shared library, zero
 compilation at install.
 
+Part of the yeptris program: *the best (multiple dimensions)
+YAML/JSON parser/builder ever* — conformance, performance,
+safety/hardening, API surfaces, transport correctness, and trust,
+held simultaneously, in C, Ruby, Rust, and JS. This binding is the
+most complete surface: the Psych drop-in namespace, JSON.parse
+parity with the strict duplicate-key contract, CBOR, and ValueML,
+tracking every libyeptris release in lockstep. The achievement
+program lives in the engine's PLAN.md ("The best-ever program").
+
 == Install (development)
 
 The gem loads a shared `libyeptris` — from `YEPTRIS_LIB_PATH`, a
