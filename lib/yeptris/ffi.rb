@@ -228,12 +228,17 @@ module Yeptris
                     %i[pointer size_t int int pointer pointer], :int
     attach_function :yeptris_marshal_node,
                     %i[yeptris_node pointer pointer], :int
+    attach_function :yeptris_marshal_node_ex,
+                    %i[yeptris_node uint32 pointer pointer], :int
     attach_function :yeptris_marshal_free, [:pointer], :void
     # The bulk child drain (#168's quadratic): O(n) iteration for
     # #each/#each_pair. Engines without it fall back to the per-index
     # walk (correct, quadratic).
     CHILDREN_DRAIN = !(@missing ||= []).include?(:yeptris_node_children)
     MARSHAL = !(@missing ||= []).include?(:yeptris_marshal_node)
+    # the strict-dup marshal entry (engine 0.6.34+, yeptris-ruby#278):
+    # gates the JSON fallback's C route in STRICT mode
+    MARSHAL_STRICT_DUP = !(@missing ||= []).include?(:yeptris_marshal_node_ex)
 
     # bulk build (TODO.impl/15 phase D): one call raises a document
     BUILD_SCALAR = 1

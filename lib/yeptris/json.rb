@@ -9,10 +9,13 @@ module Yeptris
   # keeps the Psych contract for every input (JSON-shaped included),
   # so the two never drift into each other's semantics.
   #
-  # Engines, fastest first (both exact — the parity spec runs against
+  # Engines, fastest first (all exact — the parity spec runs against
   # whichever is loaded):
   # 1. the native materializer (fused C scan → VALUE; opt-in build)
-  # 2. the record drain + strict conversion walk (always available)
+  # 2. the marshal engine (#278): strict-JSON parse + Marshal 4.8
+  #    emission + ONE core Marshal.load — all C, no per-value Ruby
+  #    (engine 0.6.34+; the strict flag follows the resolved json gem)
+  # 3. the record drain + strict conversion walk (always available)
   module JSON
     class Error < ::Yeptris::Error; end
     class ParseError < Error; end
@@ -39,7 +42,44 @@ module Yeptris
           raise ParseError, e.message
         end
       end
+      # yeptris-ruby#278: with no Ruby-version-matched native build the
+      # pure-Ruby walk measured 0.11x vs JSON.parse on real documents —
+      # the marshal engine keeps the fallback C-side end to end.
+      return marshal_engine(source, 0) if ::Yeptris::FFI::MARSHAL_STRICT_DUP
       tape_engine(source)
+    end
+
+    # The marshal engine (#278): yeptris_parse_json gates the strict
+    # grammar, yeptris_marshal_node_ex writes the Ruby Marshal 4.8
+    # stream (STRICT_DUP_KEYS raising on json 3's default contract),
+    # and ONE core Marshal.load materializes the graph. Returns nil
+    # when the engine cannot serve the route (caller keeps walking);
+    # every parse/dup failure raises ParseError.
+    def marshal_engine(source, flags)
+      begin
+        gate = ::Yeptris::Document.parse_json(source)
+      rescue ::Yeptris::ParseError => e
+        raise ParseError, e.message
+      end
+      begin
+        out_p = ::FFI::MemoryPointer.new(:pointer)
+        olen_p = ::FFI::MemoryPointer.new(:size_t)
+        st = ::Yeptris::FFI.yeptris_marshal_node_ex(
+          ::Yeptris::FFI.yeptris_document_root(gate.c_ptr, 0), flags, out_p, olen_p
+        )
+        if st != ::Yeptris::FFI::OK
+          raise ParseError, ::Yeptris::FFI.last_error_message if st == ::Yeptris::FFI::ERROR_PARSE
+
+          return nil # UNSUPPORTED: merge keys et al. cannot occur in JSON
+        end
+        buf = out_p.read_pointer
+        data = buf.read_bytes(::Yeptris::FFI.read_c_size_t(olen_p))
+        data.force_encoding(Encoding::ASCII_8BIT)
+        ::Yeptris::FFI.yeptris_marshal_free(buf)
+        Marshal.load(data)
+      ensure
+        gate.free
+      end
     end
 
     # The tape engine (issue #81): ONE call validates and materializes
@@ -212,6 +252,12 @@ module Yeptris
         raise ParseError, e.message
       end
       begin
+        if ::Yeptris::FFI::MARSHAL_STRICT_DUP
+          routed = marshal_engine(
+            source, STRICT_DUPLICATE_KEYS ? ::Yeptris::FFI::MARSHAL_STRICT_DUP_KEYS : 0
+          )
+          return routed unless routed.nil?
+        end
         cols = ::Yeptris::FFI::ValueColumns.new
         st = ::Yeptris::FFI.yeptris_value_drain_columns(
           source, source.bytesize, ::Yeptris::FFI::SCHEMA_12_CORE, cols
