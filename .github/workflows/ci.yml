@@ -38,6 +38,12 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.spec-matrix.outputs.matrix) }}
     continue-on-error: ${{ matrix.c_main == true }}
+    # the windows Ractor legs intermittently park past the default
+    # 120s per-example cap (the #264 class — rerun-clears, five runs
+    # and counting across #277/#282/main/#284); raise the cap there
+    # instead of paying the rerun lottery every train
+    env:
+      SLOW_SPEC_SECONDS: ${{ runner.os == 'Windows' && '360' || '120' }}
     steps:
       - name: Checkout binding
         uses: actions/checkout@v4
