@@ -108,6 +108,11 @@ RSpec.describe "canon parity (issues #29-#37)" do
   end
 
   describe "#32 Psych::SyntaxError-compatible surface" do
+    # isolated runs never load stdlib Psych (yeptris/psych
+    # deliberately does not) — bind it at example time like the
+    # top-level before(:all) above
+    before(:all) { require "psych" unless defined?(Psych) }
+
     it "has Psych's constructor arity, readers and message shape" do
       e = Psych::SyntaxError.new("f.yml", 3, 7, 21, "could not find expected ':'", "while scanning")
       expect(e.message).to eq("(f.yml): could not find expected ':' while scanning at line 3 column 7")
