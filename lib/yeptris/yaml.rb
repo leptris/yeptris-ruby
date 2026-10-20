@@ -1,5 +1,10 @@
 # frozen_string_literal: true
 
+# The BulkBuilder's `when Date` must not depend on the caller loading
+# stdlib's date (issue #289: a clean `require "yeptris"` raised NameError
+# before the DumpError branch could run). Psych requires date the same way.
+require "date"
+
 # Self-sufficient (issue #95): the neutral surface is a valid entry
 # point on its own — lutaml-model requires exactly this file.
 require "yeptris"
