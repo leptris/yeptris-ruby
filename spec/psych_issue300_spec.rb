@@ -80,12 +80,14 @@ RSpec.describe "Psych parity: timestamps and load_tags" do
     point.y = 2
     Yeptris::Psych.dump_tags[point_klass] = "!mygem/point"
     begin
-      # the dump_tags override rides the root tag. The emitter's
-      # verbatim own-line tag form (!<...>) does not yet re-read
-      # through the registry — the inline psych form is the follow-up
-      # that closes the round-trip
+      # the dump_tags override rides the root tag. The tag rides the
+      # COMPACT shorthand since the tag-charset law (engine 0.6.33,
+      # catch 21) put '/' in yep_scan_tag_char's URI set — the suffix
+      # re-scans, so the verbatim !<...> wrap is no longer forced
+      # ("/" made the old emitter fall back to it); the shorthand
+      # re-parses to the same tag
       dumped = Yeptris::Psych.dump(point)
-      expect(dumped).to include("!<!mygem/point>")
+      expect(dumped).to include("!mygem/point")
     ensure
       Yeptris::Psych.dump_tags.delete(point_klass)
     end

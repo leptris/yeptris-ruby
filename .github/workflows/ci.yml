@@ -113,8 +113,16 @@ jobs:
             { cp native.bundle ../../lib/yeptris/ 2>/dev/null || cp native.so ../../lib/yeptris/; } || \
             echo "::warning::the optional native materializer did not build — the FFI ladder carries the load"
 
+      # the windows Ractor legs intermittently park past the default
+      # 120s per-example cap (the #264 class — rerun-clears, five runs
+      # and counting across #277/#282/main/#284); raise the cap there
+      # instead of paying the rerun lottery every train. The runner
+      # context is steps-only, so the env rides the step (a job-level
+      # env fails the workflow parse: 0 jobs).
       - name: Run binding specs
         shell: bash
+        env:
+          SLOW_SPEC_SECONDS: ${{ runner.os == 'Windows' && '360' || '120' }}
         run: |
           if [ "$(uname -s)" = "Darwin" ]; then
             export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.dylib"
