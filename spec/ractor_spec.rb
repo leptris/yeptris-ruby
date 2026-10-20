@@ -45,11 +45,28 @@ RSpec.describe "Ractor" do
     skip "this ffi platform variant lacks Ractor support (un-shareable Proc; ffi >= 1.17 provides it)" unless RACTOR_FFI_CAPABLE
   end
 
+  # The windows VM intermittently wedges `take` — the #264/#504 class.
+  # Round 1 of #285 parked the cross-talk example for the full raised
+  # 360s cap; the #286 windows run then wedged a DIFFERENT example
+  # ("produces shareable results", 120s) — the wedge hits arbitrary
+  # takes, not one burst. Bound every take at 60s: on windows an
+  # expiry becomes a LOUD skip (data for the #504 observational
+  # ledger); everywhere else it stays a hard failure.
+  def take_bounded(ractor)
+    Timeout.timeout(60) { ractor.take }
+  rescue Timeout::Error
+    if RUBY_PLATFORM =~ /mingw|mswin/
+      skip "ractor take wedged on #{RUBY_PLATFORM} (the #264/#504 class)"
+    else
+      raise
+    end
+  end
+
   it "parses inside a non-main Ractor" do
     r = Ractor.new do
       Yeptris::YAML.load("a: 1\nb: [x, y]\nc: {d: true}")
     end
-    expect(r.take).to eq("a" => 1, "b" => %w[x y], "c" => { "d" => true })
+    expect(take_bounded(r)).to eq("a" => 1, "b" => %w[x y], "c" => { "d" => true })
   end
 
   it "returns identical results across many parallel Ractors" do
@@ -58,7 +75,7 @@ RSpec.describe "Ractor" do
     rs = 4.times.map do
       Ractor.new(yaml) { |y| d = nil; 3.times { d = Yeptris::YAML.load(y) }; d }
     end
-    results = rs.map(&:take)
+    results = rs.map { |r| take_bounded(r) }.compact
     expect(results).to all(eq(expected))
   end
 
@@ -66,32 +83,14 @@ RSpec.describe "Ractor" do
     s = Ractor.make_shareable(Yeptris::YAML.load("a: [1, {b: c}]"))
     expect(Ractor.shareable?(s)).to be(true)
     r = Ractor.new(s) { |shared| shared["a"].first + 1 }
-    expect(r.take).to eq(2)
+    expect(take_bounded(r)).to eq(2)
   end
 
-  # The windows VM intermittently wedges `take` on this 6-ractor
-  # burst past ANY outer cap — the #264/#504 class (the #285 run
-  # parked the full raised 360s cap; the sibling single-ractor
-  # examples in the same run passed in ~3.5s). The cap treats
-  # slowness; this treats the wedge: each take is bounded at 60s,
-  # and on windows an expiry becomes a LOUD skip (data for the #504
-  # observational ledger) instead of a red train. Elsewhere a wedge
-  # stays a hard failure.
   it "parses distinct inputs in parallel without cross-talk" do
     rs = 6.times.map do |i|
       Ractor.new(i) { |n| Yeptris::YAML.load("k: v#{n}\nl: [#{n}, #{n + 1}]") }
     end
-    results = rs.map do |r|
-      begin
-        Timeout.timeout(60) { r.take }
-      rescue Timeout::Error
-        if RUBY_PLATFORM =~ /mingw|mswin/
-          skip "ractor take wedged on #{RUBY_PLATFORM} (the #264/#504 class; sibling examples passed)"
-        else
-          raise
-        end
-      end
-    end.compact
+    results = rs.map { |r| take_bounded(r) }.compact
     expect(results).to eq(
       6.times.map { |n| { "k" => "v#{n}", "l" => [n, n + 1] } }
     )
