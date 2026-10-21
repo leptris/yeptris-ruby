@@ -16,7 +16,7 @@ RSpec.describe "Yeptris::JSON marshal fallback" do
   end
 
   describe "value parity (the marshal route vs JSON.parse)" do
-    VALUES = [
+    MARSHAL_VALUES = [
       "null", "true", "false",
       "0", "-0", "42", "-42",
       "-9223372036854775808", "9223372036854775807", "9223372036854775808",
@@ -33,7 +33,7 @@ RSpec.describe "Yeptris::JSON marshal fallback" do
 
     it "equals JSON.parse on every value shape" do
       skip "marshal engine unavailable" unless marshal_available?
-      VALUES.each do |json|
+      MARSHAL_VALUES.each do |json|
         expect(Yeptris::JSON.marshal_engine(json, 0)).to eq(JSON.parse(json)), json
       end
     end
