@@ -28,4 +28,39 @@ y = h.to_yaml
 raise "to_yaml" unless y.start_with?("---") && y.include?("nest:")
 raise "psych round" unless ::Psych.load(y) == h
 raise "json" unless Yeptris::JSON.load('{"a": [1, 2]}') == { "a" => [1, 2] }
+
+# The strict-JSON duplicate-key contract (issue #37, canon's CI):
+# Yeptris::JSON.load must follow the RESOLVED json gem's own verdict —
+# json >= 3 raises, 2.x last-wins. Lane diagnostics ride the failure:
+# this is the only Windows-executing guard for the lane selection.
+require "json"
+dup_src = '{"a":1,"a":2}'
+stdlib_dup = begin
+  JSON.parse(dup_src)
+rescue JSON::ParserError
+  :raised
+end
+yep_dup = begin
+  Yeptris::JSON.load(dup_src)
+rescue StandardError
+  :raised
+end
+if yep_dup != stdlib_dup
+  marshal = begin
+    ::Yeptris::FFI::MARSHAL_STRICT_DUP
+  rescue StandardError
+    :n_a
+  end
+  strict = begin
+    ::Yeptris::JSON::STRICT_DUPLICATE_KEYS
+  rescue StandardError
+    :n_a
+  end
+  warn "dup-contract lane: Native=#{defined?(::Yeptris::Native).inspect} " \
+       "MARSHAL_STRICT_DUP=#{marshal.inspect} " \
+       "STRICT_DUPLICATE_KEYS=#{strict.inspect} " \
+       "json=#{::JSON::VERSION} " \
+       "yeptris=#{Gem.loaded_specs['yeptris']&.version}"
+  raise "duplicate-key verdict drift: stdlib=#{stdlib_dup.inspect} yeptris=#{yep_dup.inspect}"
+end
 puts "PUBLISHED GEM OK #{RUBY_VERSION} #{RUBY_PLATFORM} yeptris=#{Yeptris::VERSION}"
