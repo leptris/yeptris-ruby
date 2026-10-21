@@ -276,16 +276,13 @@ module Yeptris
       false
     end
 
-    # pretty JSON generation (JSON.pretty_generate's shape); absent on
-    # libraries without yeptris_serialize_json_pretty — the JSON
-    # surface feature-detects
-    JSON_PRETTY = begin
-      attach_function :yeptris_serialize_json_pretty,
-                      %i[yeptris_document pointer pointer size_t], :pointer
-      true
-    rescue ::FFI::NotFoundError
-      false
-    end
+    # pretty JSON generation (JSON.pretty_generate's shape); the JSON
+    # surface feature-detects via the @missing convention below (the
+    # deferred stub records the miss at attach, so a begin/rescue
+    # never fires)
+    attach_function :yeptris_serialize_json_pretty,
+                    %i[yeptris_document pointer pointer size_t], :pointer
+    JSON_PRETTY = !(@missing ||= []).include?(:yeptris_serialize_json_pretty)
 
     # CBOR (RFC 8949, TODO.cbor): absent on libraries before the
     # codec's release — the CBOR module feature-detects
