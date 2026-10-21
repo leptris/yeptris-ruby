@@ -18,8 +18,8 @@ module Yeptris
           new
         end
 
-        def initialize
-          @tree = ::Yeptris::Document.create
+        def initialize(schema: nil)
+          @tree = ::Yeptris::Document.create(schema: schema)
           @names = {}  # object_id -> anchor name
           @counter = 0
         end

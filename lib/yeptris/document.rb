@@ -75,8 +75,16 @@ class Yeptris::Document
   end
 
   # An empty document for from-scratch construction (TODO.impl/11 p3).
-  def self.create
-    doc = Yeptris::FFI.yeptris_document_new
+  # schema: :compat_11 types its plain scalars through the Psych-
+  # compatible resolver — the dump faces build with it so a host String
+  # the tree builder kept plain ("1e0") stays a string (#293).
+  def self.create(schema: nil)
+    doc =
+      if schema == :compat_11
+        Yeptris::FFI.yeptris_document_new_schema(Yeptris::FFI::SCHEMA_11_COMPAT)
+      else
+        Yeptris::FFI.yeptris_document_new
+      end
     raise Yeptris::Error, "yeptris_document_new failed" if doc.null?
 
     wrap(doc)
