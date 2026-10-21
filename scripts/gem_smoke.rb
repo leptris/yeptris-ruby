@@ -33,6 +33,10 @@ raise "json" unless Yeptris::JSON.load('{"a": [1, 2]}') == { "a" => [1, 2] }
 # Yeptris::JSON.load must follow the RESOLVED json gem's own verdict —
 # json >= 3 raises, 2.x last-wins. Lane diagnostics ride the failure:
 # this is the only Windows-executing guard for the lane selection.
+# Exercise the json >= 3 lane explicitly: the verdict only bites when
+# the resolved json gem raises (canon's CI resolved json 3.1.0; legs
+# whose default json is 2.x pass vacuously).
+system("gem install json -v '~> 3.0' --no-document --conservative >/dev/null 2>&1 || true")
 require "json"
 dup_src = '{"a":1,"a":2}'
 stdlib_dup = begin
