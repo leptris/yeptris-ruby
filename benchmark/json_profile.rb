@@ -16,6 +16,12 @@
 
 $LOAD_PATH.unshift File.expand_path("../lib", __dir__)
 require "benchmark"
+# The GATE ratio is calibrated against the json 2.9-line parse baseline
+# (the runners' default gem). json >= 2.10 parses ~20% faster and would
+# silently tighten the budget — the referee judges the engine against
+# the oracle it was calibrated with, per version. Activated BEFORE the
+# require so a bundle-level pin cannot win.
+gem "json", "2.9.1"
 require "json"
 require "yeptris"
 

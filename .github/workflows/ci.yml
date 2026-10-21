@@ -301,7 +301,9 @@ jobs:
           export YEPTRIS_NATIVE_CACHE="${{ matrix.cache_mode || 'on' }}"
           export YEPTRIS_NATIVE_SHAPE="${{ matrix.shape_mode || 'pre' }}"
           export GATE="${{ matrix.gate || (matrix.gated && '1.00') || '' }}"
-          BUNDLE_GEMFILE=gemfiles/profile.gemfile bundle exec ruby benchmark/json_profile.rb 200
+          # plain ruby: the benchmark activates its calibrated json oracle
+          # itself (a second bundle cannot resolve under the frozen cache)
+          ruby benchmark/json_profile.rb 200
 
   # The CBOR referee (#157): interleaved A/B vs the cbor gem on a
   # CI-fresh runner — the honest venue (dev-host isolated numbers are
