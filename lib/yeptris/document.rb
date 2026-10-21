@@ -202,6 +202,17 @@ class Yeptris::Document
     Yeptris::FFI::Owned.string(Yeptris::FFI.yeptris_serialize_json_ex(@c_ptr, len, 1), len)
   end
 
+  # JSON.pretty_generate's shape; nil indent rides the engine default
+  # (two spaces), any other String's bytes ride verbatim per depth
+  def serialize_json_pretty(indent = nil)
+    ensure_alive!
+    len = ::FFI::MemoryPointer.new(:size_t)
+    data = indent&.b
+    Yeptris::FFI::Owned.string(
+      Yeptris::FFI.yeptris_serialize_json_pretty(@c_ptr, len, data, data ? data.bytesize : 0), len
+    )
+  end
+
   def serialize_json
     ensure_alive!
     len = ::FFI::MemoryPointer.new(:size_t)

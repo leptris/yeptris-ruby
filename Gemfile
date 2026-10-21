@@ -9,3 +9,7 @@ gem "rake", "~> 13.0"
 gem "shellwords"
 gem "benchmark" # default gem through Ruby 3.x; spec/native_spec.rb needs it on 4.0
 gem "cbor"
+# the dump-lane float contract (#651) is the fpconv shortest shape —
+# json < 2.10 prints Float#to_s bytes (1.0e-07 vs 0.0000001) and the
+# parity specs must judge against the line the engine matches
+gem "json", ">= 2.10"

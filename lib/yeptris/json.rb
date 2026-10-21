@@ -367,7 +367,7 @@ module Yeptris
     # and null stay plain), Symbols become their name.
     class DumpError < Error; end
 
-    def dump(obj)
+    def dump(obj, pretty: false, indent: "  ")
       parts = String.new(encoding: Encoding::BINARY,
                          capacity: 12 * 16) # 12-byte entries, appended in place
       blob = String.new(encoding: Encoding::BINARY)
@@ -377,7 +377,17 @@ module Yeptris
       # FFI passes String args BY REFERENCE — no MemoryPointer copies
       rc = doc.build_entries(parts, parts.bytesize / 12, blob, blob.bytesize)
       raise DumpError, "document_build failed: #{rc}" unless rc == ::Yeptris::FFI::OK
-      out = ::Yeptris::FFI::JSON_EX ? doc.serialize_json_compact : doc.serialize_json
+      out =
+        if pretty
+          unless ::Yeptris::FFI::JSON_PRETTY
+            raise DumpError, "pretty JSON needs a libyeptris with yeptris_serialize_json_pretty"
+          end
+          doc.serialize_json_pretty(indent)
+        elsif ::Yeptris::FFI::JSON_EX
+          doc.serialize_json_compact
+        else
+          doc.serialize_json
+        end
       # JSON.generate emits no trailing newline (the document writer does)
       out.end_with?("\n") ? out[0, out.bytesize - 1] : out
     ensure

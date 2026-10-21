@@ -11,7 +11,7 @@
 require "json"
 
 RSpec.describe "Yeptris::JSON parity with JSON.parse" do
-  VALUES = [
+  PARITY_VALUES = [
     "null",
     "true",
     "false",
@@ -79,7 +79,7 @@ RSpec.describe "Yeptris::JSON parity with JSON.parse" do
   end
 
   describe "values" do
-    VALUES.each do |json|
+    PARITY_VALUES.each do |json|
       it "equals JSON.parse on #{json.inspect[0, 50]}" do
         expected = parse_with_json_gem(json)
         actual = parse_with_yeptris(json)
@@ -102,9 +102,22 @@ RSpec.describe "Yeptris::JSON parity with JSON.parse" do
     it "the fallback engine matches the native engine (when both exist)" do
       skip "native extension not loaded" unless defined?(Yeptris::Native)
 
-      VALUES.each do |json|
-        native = Yeptris::Native.load_json(json)
-        fallback = Yeptris::JSON.strict_fallback(json)
+      # agreement covers the OUTCOME, raise or value — and both sides
+      # must ride the RESOLVED json-gem contract (json >= 3 raises on
+      # duplicate keys, 2.x is last-wins); the strict flag is explicit
+      # so the native tier cannot silently ride its default
+      PARITY_VALUES.each do |json|
+        strict = Yeptris::JSON::STRICT_DUPLICATE_KEYS
+        native = begin
+          Yeptris::Native.load_json(json, strict)
+        rescue StandardError
+          :raise
+        end
+        fallback = begin
+          Yeptris::JSON.strict_fallback(json)
+        rescue StandardError
+          :raise
+        end
         expect(fallback).to eq(native), json
       end
     end
