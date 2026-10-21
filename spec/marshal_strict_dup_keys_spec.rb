@@ -31,3 +31,38 @@ RSpec.describe "Yeptris::FFI::MARSHAL_STRICT_DUP_KEYS" do
       .to eq("a" => [1, 2])
   end
 end
+
+# Regression spec (found by lutaml-jsonschema CI, x64-mingw-ucrt with
+# 0.6.34.3): the C pre-scan kept one key table for the whole stream,
+# cleared on MAP_OPEN, and never grew it past 16 slots. A parent key
+# equal to a key in a preceding child object was a false duplicate
+# (every ordinary schema on lanes without a native ext), a parent
+# duplicate after a nested object was missed, and a 17th distinct key
+# in one object probed forever.
+RSpec.describe "marshal engine strict duplicate-key scan" do
+  before do
+    skip "marshal engine unavailable" unless
+      defined?(::Yeptris::FFI::MARSHAL_STRICT_DUP) &&
+      ::Yeptris::FFI::MARSHAL_STRICT_DUP
+  end
+
+  let(:flags) { ::Yeptris::FFI::MARSHAL_STRICT_DUP_KEYS }
+
+  it "checks keys per map, not across nested objects" do
+    expect(::Yeptris::JSON.marshal_engine('{"a":{"b":1},"b":2}', flags))
+      .to eq("a" => { "b" => 1 }, "b" => 2)
+    expect(::Yeptris::JSON.marshal_engine('{"a":[{"b":1}],"b":2}', flags))
+      .to eq("a" => [{ "b" => 1 }], "b" => 2)
+  end
+
+  it "raises for a duplicate in a map that contains a nested object" do
+    expect do
+      ::Yeptris::JSON.marshal_engine('{"p":1,"a":{"x":1},"p":2}', flags)
+    end.to raise_error(::Yeptris::JSON::ParseError, /duplicate key/)
+  end
+
+  it "grows past sixteen distinct keys in one object" do
+    json = JSON.generate((0...64).to_h { |i| ["k#{i}", i] })
+    expect(::Yeptris::JSON.marshal_engine(json, flags).size).to eq(64)
+  end
+end
