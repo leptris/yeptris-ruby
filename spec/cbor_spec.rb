@@ -89,6 +89,28 @@ RSpec.describe Yeptris::CBOR, if: Yeptris::CBOR.available? do
   end
 end
 
+RSpec.describe "Yeptris::CBOR host string typing (#293)" do
+  it "dumps exponent-shaped strings as text strings" do
+    %w[1e0 10e9 1.5e2 2E5].each do |s|
+      enc = Yeptris::CBOR.dump(s)
+      expect(enc).to include(s), "#{s.inspect} must ride a text item, not resolve as a float"
+      expect(Yeptris::CBOR.load(enc)).to eq(s)
+    end
+  end
+
+  it "keeps the issue's exact reproduction green" do
+    expect(Yeptris::CBOR.load(Yeptris::CBOR.dump("1e0"))).to eq("1e0")
+    expect(Yeptris::CBOR.load(Yeptris::CBOR.dump("1.5"))).to eq("1.5")
+    expect(Yeptris::CBOR.load(Yeptris::CBOR.dump("hello 1e0 world"))).to eq("hello 1e0 world")
+  end
+
+  it "keeps host numbers numeric" do
+    expect(Yeptris::CBOR.load(Yeptris::CBOR.dump(1))).to eq(1)
+    expect(Yeptris::CBOR.load(Yeptris::CBOR.dump(1.5))).to eq(1.5)
+    expect(Yeptris::CBOR.load(Yeptris::CBOR.dump(1.5e300))).to eq(1.5e300)
+  end
+end
+
 RSpec.describe "Yeptris::CBOR.load_sequence exception safety" do
   it "aborts the C iteration cleanly and re-raises when materializing raises mid-sequence" do
     skip "no CBOR in this lib" unless Yeptris::CBOR.available?

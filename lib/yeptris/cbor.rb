@@ -103,8 +103,12 @@ module Yeptris
     def build_documents(objects)
       # ONE document per object: a visitor's tree is a single
       # document and push sets its root — reuse would overwrite
+      # compat_11 types the documents' plain scalars through the
+      # Psych-compatible resolver — the same law the tree builder's
+      # plain-safety check rides, so a host String stays a CBOR text
+      # string ("1e0" resolved as a float through core-12: #293).
       objects.map do |obj|
-        visitor = ::Yeptris::Psych::Visitors::YAMLTree.new
+        visitor = ::Yeptris::Psych::Visitors::YAMLTree.new(schema: :compat_11)
         visitor.push(obj)
         visitor.document
       end

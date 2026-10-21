@@ -141,6 +141,7 @@ module Yeptris
 
     # construction (TODO.impl/11 phase 3)
     attach_function :yeptris_document_new, [], :yeptris_document
+    attach_function :yeptris_document_new_schema, [:int], :yeptris_document
     attach_function :yeptris_document_set_root,
                     %i[yeptris_document yeptris_node], :int
     attach_function :yeptris_node_new_mapping, [:yeptris_document], :yeptris_node
