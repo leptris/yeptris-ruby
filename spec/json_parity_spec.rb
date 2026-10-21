@@ -200,6 +200,12 @@ RSpec.describe "Yeptris::JSON parity with JSON.parse" do
         .to raise_error(Yeptris::JSON::ParseError, /duplicate key/)
     end
 
+    it "carries the marshal strict-dup flag constant" do
+      # the NameError class of bug: the flag was referenced by the JSON
+      # surface without existing on ::Yeptris::FFI (windows lane)
+      expect(::Yeptris::FFI::MARSHAL_STRICT_DUP_KEYS).to eq(1)
+    end
+
     it "answers last-wins when the resolved json gem is 2.x" do
       skip "resolved json gem is >= 3 (raises)" if ::JSON::VERSION.to_f >= 3
 

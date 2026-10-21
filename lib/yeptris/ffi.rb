@@ -239,6 +239,12 @@ module Yeptris
     # the strict-dup marshal entry (engine 0.6.34+, yeptris-ruby#278):
     # gates the JSON fallback's C route in STRICT mode
     MARSHAL_STRICT_DUP = !(@missing ||= []).include?(:yeptris_marshal_node_ex)
+    # yeptris_marshal_node_ex's flag bit: YEPTRIS_MARSHAL_STRICT_DUP_KEYS
+    # (engine 1fb4ed2) — raises ERROR_PARSE on a duplicate map key. The
+    # JSON surface threads this through marshal_engine when the resolved
+    # json gem is >= 3; the constant was missing (NameError on every
+    # lane that reaches the marshal route — windows has no native ext).
+    MARSHAL_STRICT_DUP_KEYS = 1
 
     # bulk build (TODO.impl/15 phase D): one call raises a document
     BUILD_SCALAR = 1
