@@ -45,7 +45,14 @@ module Yeptris
       # yeptris-ruby#278: with no Ruby-version-matched native build the
       # pure-Ruby walk measured 0.11x vs JSON.parse on real documents —
       # the marshal engine keeps the fallback C-side end to end.
-      return marshal_engine(source, 0) if ::Yeptris::FFI::MARSHAL_STRICT_DUP
+      # STRICT_DUPLICATE_KEYS rides the flags: json >= 3's default
+      # contract raises on duplicates. The flags were hardcoded to 0
+      # here, so every lane without the native ext (windows-latest has
+      # none) answered last-wins under json >= 3 — found by canon's
+      # dependent CI, whose parity pin now names the lane.
+      return marshal_engine(
+        source, STRICT_DUPLICATE_KEYS ? ::Yeptris::FFI::MARSHAL_STRICT_DUP_KEYS : 0
+      ) if ::Yeptris::FFI::MARSHAL_STRICT_DUP
       tape_engine(source)
     end
 

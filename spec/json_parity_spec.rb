@@ -179,6 +179,34 @@ RSpec.describe "Yeptris::JSON parity with JSON.parse" do
     end
   end
 
+  describe "the marshal lane honors the duplicate-key contract (issue #37)" do
+    # canon's dependent CI: windows-latest has no native ext, and the
+    # marshal route took flags hardcoded to 0 — last-wins under json
+    # >= 3 while the resolved gem raises. Force the lane the way the
+    # missing native ext forces it: Native undefined for the call.
+    around do |example|
+      had_native = defined?(::Yeptris::Native)
+      native_const = ::Yeptris::Native if had_native
+      ::Yeptris.send(:remove_const, :Native) if had_native
+      example.run
+    ensure
+      ::Yeptris.const_set(:Native, native_const) if had_native
+    end
+
+    it "raises on duplicate keys when the resolved json gem raises" do
+      skip "resolved json gem is 2.x (last-wins)" unless ::JSON::VERSION.to_f >= 3
+
+      expect { Yeptris::JSON.load('{"a":1,"a":2}') }
+        .to raise_error(Yeptris::JSON::ParseError, /duplicate key/)
+    end
+
+    it "answers last-wins when the resolved json gem is 2.x" do
+      skip "resolved json gem is >= 3 (raises)" if ::JSON::VERSION.to_f >= 3
+
+      expect(Yeptris::JSON.load('{"a":1,"a":2}')).to eq({ "a" => 2 })
+    end
+  end
+
   describe "the YAML surface keeps the Psych contract (default-safety)" do
     it "JSON-shaped YAML with a trailing comma parses like Psych" do
       expect(Yeptris::YAML.load('{"a": [1,]}')).to eq({ "a" => [1] })
