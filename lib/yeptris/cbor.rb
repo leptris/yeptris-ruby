@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "yeptris"
+require "yeptris/psych" # the encode path builds through the psych YAMLTree
+
 module Yeptris
   # CBOR (RFC 8949) over the same FFI document the rest of the
   # binding rides (TODO.cbor/04). Decode materializes through the
