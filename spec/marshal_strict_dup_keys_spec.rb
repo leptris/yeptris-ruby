@@ -20,13 +20,12 @@ RSpec.describe "Yeptris::FFI::MARSHAL_STRICT_DUP_KEYS" do
 
     flags = ::Yeptris::FFI::MARSHAL_STRICT_DUP_KEYS
 
-    if ::Yeptris::JSON::STRICT_DUPLICATE_KEYS
-      expect { ::Yeptris::JSON.marshal_engine('{"a":1,"a":2}', flags) }
-        .to raise_error(::Yeptris::JSON::ParseError)
-    else
-      expect(::Yeptris::JSON.marshal_engine('{"a":1,"a":2}', flags))
-        .to eq("a" => 2)
-    end
+    # the flag itself enforces strictness at the engine, whatever the
+    # host json gem's resolved default is
+    expect { ::Yeptris::JSON.marshal_engine('{"a":1,"a":2}', flags) }
+      .to raise_error(::Yeptris::JSON::ParseError)
+    expect(::Yeptris::JSON.marshal_engine('{"a":1,"a":2}', 0))
+      .to eq("a" => 2)
 
     expect(::Yeptris::JSON.marshal_engine('{"a":[1,2]}', flags))
       .to eq("a" => [1, 2])
