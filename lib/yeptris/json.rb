@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "yeptris"
+
 module Yeptris
   # The STRICT JSON surface (TODO.restructure/31).
   #
