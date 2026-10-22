@@ -301,6 +301,10 @@ jobs:
           export YEPTRIS_NATIVE_CACHE="${{ matrix.cache_mode || 'on' }}"
           export YEPTRIS_NATIVE_SHAPE="${{ matrix.shape_mode || 'pre' }}"
           export GATE="${{ matrix.gate || (matrix.gated && '1.00') || '' }}"
+          # The plain-ruby lane cannot see the bundler-cache's gems (they
+          # install under vendor/bundle, not GEM_HOME) — the ffi runtime
+          # the load ladder needs goes into the shared home explicitly.
+          gem install ffi --no-document
           # plain ruby: the benchmark activates its calibrated json oracle
           # itself (a second bundle cannot resolve under the frozen cache)
           ruby benchmark/json_profile.rb 200
