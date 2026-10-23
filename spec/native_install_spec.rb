@@ -22,18 +22,21 @@ RSpec.describe "the native materializer's install lane" do
 
   it "degrades to a no-op Makefile when no engine binary is present" do
     Dir.mktmpdir do |gemroot|
-      # a gem-shaped tree: headers vendored, NO libyeptris binary, no
-      # YEPTRIS_LIB_PATH — the install must still succeed
+      # a gem-shaped tree, fully synthesized (vendor/ is gitignored —
+      # the repo checkout on CI has none): headers vendored, NO
+      # libyeptris binary, no YEPTRIS_LIB_PATH — the install must
+      # still succeed
       FileUtils.mkdir_p(File.join(gemroot, "vendor", "libyeptris", "src", "include", "yeptris"))
-      FileUtils.cp(File.join(repo, "vendor/libyeptris/CMakeLists.txt"),
-                   File.join(gemroot, "vendor/libyeptris/CMakeLists.txt"))
+      File.write(File.join(gemroot, "vendor/libyeptris/CMakeLists.txt"),
+                 "project(yeptris\n  VERSION 0.0.0\n)\n")
       header = File.join(gemroot, "vendor/libyeptris/src/include/yeptris/version.h.in")
       FileUtils.mkdir_p(File.dirname(header))
-      FileUtils.cp(File.join(repo, "vendor/libyeptris/src/include/yeptris/version.h.in"), header)
-      %w[api.h visit.h].each do |h|
-        src = File.join(repo, "vendor/libyeptris/src/include/yeptris", h)
-        FileUtils.cp(src, File.join(gemroot, "vendor/libyeptris/src/include/yeptris", h)) if File.exist?(src)
-      end
+      File.write(header, <<~VIN)
+        #ifndef YEPTRIS_VERSION_H
+        #define YEPTRIS_VERSION_H
+        #define YEPTRIS_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
+        #endif
+        VIN
       ext = File.join(gemroot, "ext", "yeptris_native")
       FileUtils.mkdir_p(ext)
       work = Dir.mktmpdir
