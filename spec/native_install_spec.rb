@@ -44,9 +44,8 @@ RSpec.describe "the native materializer's install lane" do
         system(RbConfig.ruby, extconf, chdir: work, out: File::NULL, err: File::NULL)
       end
       expect(ok).to be(true)
-        mk = File.read(File.join(work, "Makefile"))
-        expect(mk).to include("the FFI ladder carries the load")
-      end
+      mk = File.read(File.join(work, "Makefile"))
+      expect(mk).to include("the FFI ladder carries the load")
     end
   end
 end
