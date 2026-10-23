@@ -63,7 +63,18 @@ static int yep_cache_mode = YEP_CACHE_ON;
  * rb_ary_new() so 3-element arrays stay EMBEDDED in the RVALUE, and
  * bulk-path hashes get exact capacity from the counted pairs. */
 enum { YEP_SHAPE_PRE = 0, YEP_SHAPE_NATURAL = 1 };
-static int yep_shape_mode = YEP_SHAPE_PRE;
+/* Default per arch (the #310 arm64 referee matrix, 24 cells over the
+ * json-users-shaped corpus): NATURAL — rb_ary_new() keeps 3-element
+ * arrays embedded in the RVALUE instead of forcing heap buffers, and
+ * it won EVERY cell (1.00-1.04x vs pre's 1.10-1.22x vs JSON.parse).
+ * x86 keeps PRE until its referee says otherwise (the GATE judges the
+ * per-arch default on CI). */
+#if defined(__aarch64__) || defined(__arm__) || defined(__ARMEL__) || defined(_M_ARM64)
+#define YEP_SHAPE_DEFAULT YEP_SHAPE_NATURAL
+#else
+#define YEP_SHAPE_DEFAULT YEP_SHAPE_PRE
+#endif
+static int yep_shape_mode = YEP_SHAPE_DEFAULT;
 
 static uint64_t jr_hash(const char* sp, long sl) {
     /* 8-byte-prefix key (the leptris nametab trick): one safe load
