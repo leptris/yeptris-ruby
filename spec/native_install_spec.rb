@@ -40,11 +40,10 @@ RSpec.describe "the native materializer's install lane" do
       ext = File.join(gemroot, "ext", "yeptris_native")
       FileUtils.mkdir_p(ext)
       work = Dir.mktmpdir
-      Dir.chdir(work) do
-        EnvGuard.without_env("YEPTRIS_LIB_PATH", "YEPTRIS_SRC") do
-          `#{RbConfig.ruby.inspect} #{extconf.inspect} >/dev/null 2>&1`
-        end
-        expect($?.success?).to be(true)
+      ok = EnvGuard.without_env("YEPTRIS_LIB_PATH", "YEPTRIS_SRC") do
+        system(RbConfig.ruby, extconf, chdir: work, out: File::NULL, err: File::NULL)
+      end
+      expect(ok).to be(true)
         mk = File.read(File.join(work, "Makefile"))
         expect(mk).to include("the FFI ladder carries the load")
       end
