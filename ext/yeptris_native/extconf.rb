@@ -55,7 +55,9 @@ else
   vhin = File.join(src_root, "include", "yeptris", "version.h.in")
   unless File.exist?(File.join(src_root, "include", "yeptris", "version.h"))
     if File.exist?(vhin)
-      ver = File.read(File.join(vendored, "CMakeLists.txt"))[/project\s*\([^)]*?VERSION\s+([0-9.]+)/m, 1] || "0.0.0"
+      # CMakeLists sits at the engine tree's root: the vendored gem
+      # tree (vendor/libyeptris) or the CI checkout (libyeptris-src)
+      ver = File.read(File.join(File.dirname(src_root), "CMakeLists.txt"))[/project\s*\([^)]*?VERSION\s+([0-9.]+)/m, 1] || "0.0.0"
       maj, min, pat = ver.split(".")
       File.write("version.h", File.read(vhin)
         .gsub("@PROJECT_VERSION_MAJOR@", maj || "0")
