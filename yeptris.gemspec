@@ -35,14 +35,16 @@ Gem::Specification.new do |spec|
   # The PURE gem builds the whole engine at install (libyeptris from
   # vendor/, then the native materializer against it). PLATFORM gems
   # vendor the prebuilt engine binary and build ONLY the materializer
-  # (#311: the installing Ruby compiles it, so every Ruby minor gets
-  # the native lane; the extconf degrades to a no-op on toolchain-free
-  # images — alpine smoke containers have no make — and the FFI
-  # ladder carries the load). The platform-gem script stages
+  # Platform gems ship the prebuilt native lane (the build script
+  # stages lib/yeptris/<minor>/native.so) and register NO install-time
+  # extension — toolchain-free installs (the alpine musl smoke has no
+  # make; the 627509b law, #317: the #311 no-op assumption was wrong,
+  # extconf ABORTS without a compiler). The pure gem builds both
+  # extconfs at install. The platform-gem script stages
   # .yeptris-platform-gem as the marker.
   spec.extensions =
     if File.exist?(File.expand_path(".yeptris-platform-gem", __dir__))
-      ["ext/yeptris_native/extconf.rb"]
+      []
     else
       ["ext/libyeptris/extconf.rb", "ext/yeptris_native/extconf.rb"]
     end
