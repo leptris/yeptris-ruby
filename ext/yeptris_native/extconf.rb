@@ -39,7 +39,12 @@ src_roots = [ENV["YEPTRIS_SRC"]].compact
 src_roots << File.join(vendored, "src")
 src_root = src_roots.find { |d| d && File.directory?(File.join(d, "include")) }
 
-if lib.nil?
+# 0. The toolchain probe — the docstring's third miss (yeptris-ruby#317):
+# a toolchain-free image (the alpine musl smoke has no compiler) must
+# degrade to the no-op Makefile, not abort inside mkmf's sanity link.
+if !have_devel?
+  write_dummy_makefile("yeptris: no usable toolchain for the materializer; the FFI ladder carries the load")
+elsif lib.nil?
   write_dummy_makefile("yeptris: no libyeptris binary for the materializer; the FFI ladder carries the load")
 elsif src_root.nil?
   write_dummy_makefile("yeptris: no engine headers for the materializer; the FFI ladder carries the load")
