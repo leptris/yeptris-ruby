@@ -1,0 +1,475 @@
+# frozen_string_literal: true
+
+require "date"
+require "time"
+
+# A node inside a document. Borrowed C memory: every call routes
+# through the owning document's liveness check — use after free
+# raises Yeptris::FreedError, never a segfault.
+class Yeptris::Node
+  include Enumerable
+
+  attr_reader :c_ptr
+
+  # @api private — always constructed via Document#wrap_node (identity).
+  def initialize(c_ptr, document)
+    @c_ptr = c_ptr
+    @document = document
+  end
+
+  def document
+    @document
+  end
+
+  KINDS = {
+    Yeptris::FFI::NODE_SCALAR => :scalar,
+    Yeptris::FFI::NODE_SEQUENCE => :sequence,
+    Yeptris::FFI::NODE_MAPPING => :mapping,
+    Yeptris::FFI::NODE_ALIAS => :alias,
+  }.freeze
+
+  def kind
+    KINDS[alive { Yeptris::FFI.yeptris_node_kind(@c_ptr) }]
+  end
+
+  def scalar?
+    kind == :scalar
+  end
+
+  def sequence?
+    kind == :sequence
+  end
+
+  def mapping?
+    kind == :mapping
+  end
+
+  def alias?
+    kind == :alias
+  end
+
+  # Scalar content / alias name (UTF-8 String), nil for collections.
+  def value
+    len = len_buffer
+    ptr = alive { Yeptris::FFI.yeptris_node_value(@c_ptr, len) }
+    return nil if ptr.null?
+
+    ptr.read_bytes(Yeptris::FFI.read_c_size_t(len)).force_encoding(Encoding::UTF_8)
+  end
+
+  STYLES = {
+    Yeptris::FFI::STYLE_PLAIN => :plain,
+    Yeptris::FFI::STYLE_SINGLE_QUOTED => :single_quoted,
+    Yeptris::FFI::STYLE_DOUBLE_QUOTED => :double_quoted,
+    Yeptris::FFI::STYLE_LITERAL => :literal,
+    Yeptris::FFI::STYLE_FOLDED => :folded,
+  }.freeze
+
+  def style
+    STYLES[alive { Yeptris::FFI.yeptris_node_style(@c_ptr) }]
+  end
+
+  # The out-length receiver: ONE buffer per thread, reused. A fresh
+  # FFI::MemoryPointer per accessor call was an allocation storm that
+  # stalled the Windows heap under the #182 churn loop (the #504
+  # family — the hang's stack sits in FFI::MemoryPointer#initialize,
+  # node.rb anchor/tag reads inside Integer#times with GC.start).
+  def len_buffer
+    Thread.current[:yeptris_len_buf] ||= ::FFI::MemoryPointer.new(:size_t)
+  end
+
+  # Explicit tag URI when present, else nil.
+  def tag
+    len = len_buffer
+    ptr = alive { Yeptris::FFI.yeptris_node_tag(@c_ptr, len) }
+    return nil if ptr.null?
+
+    ptr.read_bytes(Yeptris::FFI.read_c_size_t(len)).force_encoding(Encoding::UTF_8)
+  end
+
+  def anchor
+    len = len_buffer
+    ptr = alive { Yeptris::FFI.yeptris_node_anchor(@c_ptr, len) }
+    return nil if ptr.null?
+
+    ptr.read_bytes(Yeptris::FFI.read_c_size_t(len)).force_encoding(Encoding::UTF_8)
+  end
+
+  def alias_target
+    t = alive { Yeptris::FFI.yeptris_node_alias_target(@c_ptr) }
+    @document.wrap_node(t)
+  end
+
+  # ---- typed scalar reads (tag id decides eligibility) ----
+
+  def to_i
+    out = ::FFI::MemoryPointer.new(:int64)
+    status = alive { Yeptris::FFI.yeptris_node_int(@c_ptr, out) }
+    Yeptris::FFI.check_status(status, "yeptris_node_int")
+    out.read_int64
+  end
+
+  def to_f
+    out = ::FFI::MemoryPointer.new(:double)
+    status = alive { Yeptris::FFI.yeptris_node_float(@c_ptr, out) }
+    Yeptris::FFI.check_status(status, "yeptris_node_float")
+    out.read_double
+  end
+
+  def to_bool
+    out = ::FFI::MemoryPointer.new(:int)
+    status = alive { Yeptris::FFI.yeptris_node_bool(@c_ptr, out) }
+    Yeptris::FFI.check_status(status, "yeptris_node_bool")
+    out.read_int != 0
+  end
+
+  TAGS = {
+    Yeptris::FFI::TAG_STR => :str,
+    Yeptris::FFI::TAG_INT => :int,
+    Yeptris::FFI::TAG_FLOAT => :float,
+    Yeptris::FFI::TAG_BOOL => :bool,
+    Yeptris::FFI::TAG_NULL => :null,
+    Yeptris::FFI::TAG_TIMESTAMP => :timestamp,
+    Yeptris::FFI::TAG_BINARY => :binary,
+  }.freeze
+
+  def tag_id
+    TAGS[alive { Yeptris::FFI.yeptris_node_tag_id(@c_ptr) }]
+  end
+
+  # ---- sequence access ----
+
+  def size
+    case kind
+    when :sequence then seq_count
+    when :mapping then map_count
+    else 1
+    end
+  end
+
+  def seq_count
+    alive { Yeptris::FFI.yeptris_node_seq_count(@c_ptr) }
+  end
+
+  def seq_at(index)
+    @document.wrap_node(alive { Yeptris::FFI.yeptris_node_seq_at(@c_ptr, index) })
+  end
+
+  def each
+    return enum_for(:each) unless block_given?
+    raise Yeptris::Error, "#each is for sequences" unless sequence?
+
+    if Yeptris::FFI::CHILDREN_DRAIN
+      # one bulk walk (#168): the per-index seq_at loop paid i sibling
+      # hops per element — n^2/2 over an 80k-row sequence
+      n = alive { Yeptris::FFI.yeptris_node_seq_count(@c_ptr) }
+      buf = ::FFI::MemoryPointer.new(:pointer, n)
+      alive { Yeptris::FFI.yeptris_node_children(@c_ptr, buf, n) }
+      step = buf.type_size
+      n.times { |i| yield @document.wrap_node(buf.get_pointer(i * step)) }
+    else
+      (0...seq_count).each { |i| yield seq_at(i) }
+    end
+  end
+
+  # ---- mapping access ----
+
+  def map_count
+    alive { Yeptris::FFI.yeptris_node_map_count(@c_ptr) }
+  end
+
+  def [](key)
+    raise Yeptris::Error, "#[] is for mappings" unless mapping?
+
+    key = key.to_s
+    @document.wrap_node(
+      alive { Yeptris::FFI.yeptris_node_map_get(@c_ptr, key, key.bytesize) }
+    )
+  end
+
+  def key?(key)
+    !self[key].nil?
+  end
+
+  # Ordered [key, value] pairs.
+  def each_pair
+    return enum_for(:each_pair) unless block_given?
+    raise Yeptris::Error, "#each_pair is for mappings" unless mapping?
+
+    if Yeptris::FFI::CHILDREN_DRAIN
+      # key,value interleaved in one walk — the same #168 cure
+      pairs = alive { Yeptris::FFI.yeptris_node_map_count(@c_ptr) }
+      buf = ::FFI::MemoryPointer.new(:pointer, pairs * 2)
+      alive { Yeptris::FFI.yeptris_node_children(@c_ptr, buf, pairs * 2) }
+      step = buf.type_size
+      pairs.times do |p|
+        yield @document.wrap_node(buf.get_pointer((2 * p) * step)),
+              @document.wrap_node(buf.get_pointer((2 * p + 1) * step))
+      end
+    else
+      k = ::FFI::MemoryPointer.new(:pointer)
+      v = ::FFI::MemoryPointer.new(:pointer)
+      (0...map_count).each do |i|
+        rc = alive { Yeptris::FFI.yeptris_node_map_at(@c_ptr, i, k, v) }
+        next unless rc.zero?
+
+        yield @document.wrap_node(k.read_pointer), @document.wrap_node(v.read_pointer)
+      end
+    end
+  end
+
+  def keys
+    # explicit block: two-arg yield + Symbol#to_proc would call
+    # key.first(value) instead of taking the pair
+    each_pair.map { |k, _v| k }
+  end
+
+  # ---- construction (TODO.impl/11 phase 3; errors raise) ----
+
+  def map_add(key, node)
+    key = key.to_s
+    rc = alive { Yeptris::FFI.yeptris_node_map_add(@c_ptr, key, key.bytesize, node.c_ptr) }
+    Yeptris::FFI.check_status(rc, "yeptris_node_map_add")
+    self
+  end
+
+  # A pre-built key NODE ( Psych parity: nil keys ride the explicit
+  # `!` tag on an empty single-quoted scalar, which the byte-key form
+  # cannot carry)
+  def map_add_node(key_node, node)
+    rc = alive do
+      Yeptris::FFI.yeptris_node_map_add_node(@c_ptr, key_node.c_ptr, node.c_ptr)
+    end
+    Yeptris::FFI.check_status(rc, "yeptris_node_map_add_node")
+    self
+  end
+
+  def map_set(key, node)
+    key = key.to_s
+    rc = alive { Yeptris::FFI.yeptris_node_map_set(@c_ptr, key, key.bytesize, node.c_ptr) }
+    Yeptris::FFI.check_status(rc, "yeptris_node_map_set")
+    self
+  end
+
+  def map_del(key)
+    key = key.to_s
+    alive { Yeptris::FFI.yeptris_node_map_del(@c_ptr, key, key.bytesize) }.zero?
+  end
+
+  def seq_add(node)
+    rc = alive { Yeptris::FFI.yeptris_node_seq_add(@c_ptr, node.c_ptr) }
+    Yeptris::FFI.check_status(rc, "yeptris_node_seq_add")
+    self
+  end
+
+  # Props on synthesized nodes (15's YAMLTree); values copied in.
+  def set_anchor(name)
+    alive { Yeptris::FFI.yeptris_node_set_anchor(@c_ptr, name, name.bytesize) }.zero?
+  end
+
+  def set_tag(tag)
+    alive { Yeptris::FFI.yeptris_node_set_tag(@c_ptr, tag, tag.bytesize) }.zero?
+  end
+
+  def seq_del(index)
+    alive { Yeptris::FFI.yeptris_node_seq_del(@c_ptr, index) }.zero?
+  end
+
+  # ---- Ruby materialization (Psych-compatible) ----
+
+  # Materializes the subtree as native Ruby objects. Aliases preserve
+  # object identity (the same Ruby object for every reference), keys
+  # materialize with Psych's implicit typing (":sym" -> Symbol under
+  # compat), and the anchor memo makes cycles defined by anchors safe.
+  def node_id
+    alive { Yeptris::FFI.yeptris_node_id(@c_ptr) }
+  end
+
+  # The marshal fast path (TODO.restructure/21; #178): one C call
+  # turns this subtree into Marshal 4.8 bytes — Marshal.load builds
+  # the Ruby objects in C, no per-node FFI. nil when the document
+  # carries constructs the format cannot express (merge keys,
+  # timestamps, tagged revivals): the caller walks instead. Raises
+  # ParseError on engine errors (not on the bail).
+  def marshal_fast
+    return nil unless Yeptris::FFI::MARSHAL
+
+    out_p = ::FFI::MemoryPointer.new(:pointer)
+    olen_p = ::FFI::MemoryPointer.new(:size_t)
+    st = alive { Yeptris::FFI.yeptris_marshal_node(@c_ptr, out_p, olen_p) }
+    if st == Yeptris::FFI::ERROR_UNSUPPORTED
+      nil
+    elsif st != Yeptris::FFI::OK
+      raise Yeptris::ParseError, Yeptris::FFI.last_error_message
+    else
+      bytes = out_p.read_pointer.read_bytes(Yeptris::FFI.read_c_size_t(olen_p))
+      bytes.force_encoding(Encoding::ASCII_8BIT)
+      ::Marshal.load(bytes)
+    end
+  ensure
+    Yeptris::FFI.yeptris_marshal_free(out_p.read_pointer) if out_p
+  end
+
+  def to_ruby(memo = nil)
+    # readonly documents memoize per node: a second materialization
+    # returns the SAME object (the readonly cache is the ground truth
+    # for alias identity across calls).
+    if @document.readonly?
+      rm = @document.readonly_memo
+      cached = rm[node_id]
+      return cached if cached
+    end
+    # Marshal fast path (TODO.restructure/21): one C call turns the
+    # whole subtree into Ruby objects, preserving alias identity via
+    # the object's own object-link table. Only at the TOP-LEVEL entry
+    # (memo nil): inside a recursive walk a partial marshal would
+    # materialize outside the shared memo and break alias identity.
+    # Falls back to the per-node FFI walk on constructs the format
+    # cannot express (merge keys, timestamps) and on older builds.
+    if Yeptris::FFI::MARSHAL && memo.nil?
+      result = marshal_fast
+      unless result.nil?
+        @document.readonly_memo[node_id] = result if @document.readonly?
+        return result
+      end
+    end
+    if @document.readonly?
+      return @document.readonly_memo[node_id] = to_ruby_walk({})
+    end
+    to_ruby_walk(memo || {})
+  end
+
+  def to_ruby_walk(memo)
+    cached = memo[node_id]
+    return cached if cached
+
+    case kind
+    when :mapping
+      h = {}
+      memo[node_id] = h
+      each_pair do |k, v|
+        key = k.to_ruby_key
+        val = v.to_ruby(memo)
+        if key == "<<" && k.tag != "tag:yaml.org,2002:str"
+          # stdlib revive_hash's merge branch: the VALUE's node kind
+          # picks the arm; every merge is TypeError-guarded (a bad
+          # element keeps the whole '<<' pair literal)
+          if v.kind == :alias || v.mapping?
+            begin
+              h.merge!(val)
+            rescue ::TypeError
+              h[key] = val
+            end
+          elsif v.sequence?
+            begin
+              merged = {}
+              val.reverse_each { |e| merged.merge!(e) }
+              h.merge!(merged)
+            rescue ::TypeError
+              h[key] = val
+            end
+          else
+            h[key] = val
+          end
+        else
+          h[key] = val
+        end
+      end
+      h
+    when :sequence
+      a = []
+      memo[node_id] = a
+      each { |e| a << e.to_ruby(memo) }
+      a
+    when :alias
+      t = alias_target
+      if t.nil?
+        raise ::Yeptris::Psych::AnchorNotDefined,
+              "Unknown anchor: #{anchor}"
+      end
+      t.to_ruby(memo)
+    else
+      scalar_to_ruby
+    end
+  end
+
+  # Mapping keys: Psych semantics — a plain scalar ":name" under the
+  # compat schema scans to a Symbol; everything else materializes as
+  # the scalar itself.
+  def to_ruby_key
+    symbol? ? symbolize : to_ruby
+  end
+
+  def scalar_to_ruby
+    return symbolize if symbol? && tag_id == :str
+
+    # !ruby/symbol (#258): psych deserializes the scalar to a Symbol
+    # (both spellings; safety is walk_safe's permitted_classes gate)
+    if tag == "!ruby/symbol" || tag == "tag:ruby.yaml.org,2002:symbol"
+      return value.to_s.to_sym
+    end
+
+    # scanner-coercion primitives (psych's ClassLoader-free path)
+    case tag
+    when "!ruby/string", "tag:ruby.yaml.org,2002:string" then return value.to_s
+    when "!ruby/integer", "tag:ruby.yaml.org,2002:integer" then return value.to_i
+    when "!ruby/float", "tag:ruby.yaml.org,2002:float" then return value.to_f
+    end
+
+    # stdlib deserialize's tagged-scalar arms: the class tag carries
+    # DateTime (dumped tagged — a plain timestamp re-loads as Time)
+    if tag == "!ruby/object:DateTime"
+      ts = value.to_s.sub(/ (\d)/, 'T\\1').sub(/ ([+-]\d)/, '\\1')
+      t = ::Time.xmlschema(ts)
+      return ::DateTime.civil(t.year, t.month, t.day, t.hour, t.min, t.sec,
+                              Rational(t.utc_offset, 86_400)) + Rational(t.subsec, 86_400)
+    end
+
+    case tag_id
+    when :null then nil
+    when :bool then to_bool
+    when :int then to_i
+    when :float
+      # Psych's dot-required float applies ONLY under compat_11; the
+      # core schema's regexp has an optional dot (spec 10.3.2), so
+      # core_12 exponent-only floats materialize as Floats
+      text = value.to_s
+      if @document.parse_schema == :compat_11 &&
+         !text.include?(".") && !text.include?(":") && !text.start_with?(".")
+        text
+      else
+        to_f
+      end
+    when :timestamp then ::Yeptris::Materializer.parse_timestamp(value)
+    when :binary then value.unpack1("m") # ASCII-8BIT bytes (#168)
+    else
+      # beyond int64 the C resolver leaves plain scalars :str; Psych
+      # materializes Integer (issue #31) — rebuild from the text
+      text = value.to_s
+      if style == :plain && text.length > 18 &&
+         ::Yeptris::ValueML::PSYCH_INT_SHAPE.match?(text)
+        text.delete(",_").to_i
+      else
+        value
+      end
+    end
+  end
+
+  # Psych's ScalarScanner: plain ":name" (and ":", the null Symbol)
+  # scans to a Symbol; quoting defeats it.
+  def symbol?
+    style == :plain && value&.start_with?(":") && !value.start_with?("::")
+  end
+
+  def symbolize
+    v = value
+    v.length <= 1 ? :"" : v[1..].to_sym
+  end
+
+
+
+  def alive
+    @document.ensure_alive!
+    yield
+  end
+end

@@ -1,0 +1,239 @@
+# frozen_string_literal: true
+
+# TODO.restructure/31 — the strict-JSON surface's PARITY SPEC.
+#
+# `Yeptris::JSON.load` must equal `JSON.parse` on every value and
+# every error case, on whichever engine is loaded (native when the
+# extension is built, the record-drain fallback otherwise). Defaults
+# on the YAML surface never flip on benchmark claims alone — this
+# spec plus benchmark/json_profile.rb are the proof required.
+
+require "json"
+
+RSpec.describe "Yeptris::JSON parity with JSON.parse" do
+  PARITY_VALUES = [
+    "null",
+    "true",
+    "false",
+    "0",
+    "-0",
+    "42",
+    "-9223372036854775808",
+    "9223372036854775807",
+    "9223372036854775808",
+    "12345678901234567890123",
+    "1.5",
+    "-0.25",
+    "1e3",
+    "1E+3",
+    "2.5e-8",
+    "0.1",
+    %q("hello"),
+    %q(""),
+    %q("with \\"escape\\" and \\n newline"),
+    %q("unicode: café ☕ 𝄞"),
+    "[]",
+    "{}",
+    "[1, 2.5, true, null, \"s\"]",
+    "{\"id\":1,\"name\":\"x\",\"tags\":[\"a\",\"b\"]}",
+    "[{\"a\":1},{\"b\":[2,3]},[[4]]]",
+    "{\"a\":{\"b\":{\"c\":[{}]}}}",
+    "{\"dup\":1,\"dup\":2}",
+    "  [ 1 , 2 ]  ",
+    "\n\t{\n\"k\"\n:\n1}\n",
+  ].freeze
+
+  ERRORS = [
+    "",
+    "not json",
+    "[1,]",
+    "{\"a\" 1}",
+    "{\"a\":}",
+    "[1 2]",
+    "'single'",
+    "{a:1}",
+    "01",
+    "1.",
+    ".5",
+    "1e",
+    "+1",
+    "NaN",
+    "Infinity",
+    %q({"a":1} trailing),
+    "[",
+    "\"unterminated",
+    "{\"a\":\"\\u12\"}",
+    "true false",
+  ].freeze
+
+  def parse_with_json_gem(text)
+    JSON.parse(text)
+  rescue JSON::ParserError
+    :parse_error
+  end
+
+  def parse_with_yeptris(text)
+    Yeptris::JSON.load(text)
+  rescue Yeptris::JSON::ParseError, Yeptris::ParseError
+    :parse_error
+  end
+
+  describe "values" do
+    PARITY_VALUES.each do |json|
+      it "equals JSON.parse on #{json.inspect[0, 50]}" do
+        expected = parse_with_json_gem(json)
+        actual = parse_with_yeptris(json)
+        expect(actual).to eq(expected)
+      end
+    end
+  end
+
+  describe "errors" do
+    ERRORS.each do |json|
+      it "rejects what JSON.parse rejects: #{json.inspect[0, 40]}" do
+        expected = parse_with_json_gem(json)
+        actual = parse_with_yeptris(json)
+        expect(actual).to eq(:parse_error), "yeptris accepted #{json.inspect}"
+      end
+    end
+  end
+
+  describe "engines agree" do
+    it "the fallback engine matches the native engine (when both exist)" do
+      skip "native extension not loaded" unless defined?(Yeptris::Native)
+
+      # agreement covers the OUTCOME, raise or value — and both sides
+      # must ride the RESOLVED json-gem contract (json >= 3 raises on
+      # duplicate keys, 2.x is last-wins); the strict flag is explicit
+      # so the native tier cannot silently ride its default
+      PARITY_VALUES.each do |json|
+        strict = Yeptris::JSON::STRICT_DUPLICATE_KEYS
+        native = begin
+          Yeptris::Native.load_json(json, strict)
+        rescue StandardError
+          :raise
+        end
+        fallback = begin
+          Yeptris::JSON.strict_fallback(json)
+        rescue StandardError
+          :raise
+        end
+        expect(fallback).to eq(native), json
+      end
+    end
+  end
+
+  describe "types" do
+    it "1e3 is a Float (the JSON contract, NOT the Psych String)" do
+      expect(Yeptris::JSON.load("[1e3]")[0]).to be_a(Float).and eq(1000.0)
+    end
+
+    it "integer-beyond-int64 is an exact Integer (Bignum)" do
+      expect(Yeptris::JSON.load("[9223372036854775808]")).to eq([9_223_372_036_854_775_808])
+    end
+
+    it "strings are UTF-8" do
+      s = Yeptris::JSON.load(%q(["café"]))[0]
+      expect(s.encoding).to eq(Encoding::UTF_8)
+    end
+  end
+
+  describe "duplicate-key frames survive array closes" do
+    # Key frames were pushed per MAP_OPEN but popped on EVERY close:
+    # array closes stole the enclosing map's frame, and array-valued
+    # keys exhausted the stack — the next map key then crashed on
+    # key_sets.last.key? (found by ea's CI under a json >= 3
+    # resolution; json < 3 leaves key_sets nil and never trips it).
+    CRASHERS = [
+      %({"a":[1],"b":[2],"c":[3]}),
+      %({"k":[{"n":1}],"l":{"m":[2]},"n":[3]}),
+      %({"metadata":{"title":"x"},"packages":[{"id":"p1","subs":[]},{"id":"p2"}],"rels":[{"id":"r1"}]}),
+    ].freeze
+
+    it "equals JSON.parse on the frame-exhausting shapes" do
+      CRASHERS.each do |json|
+        expect(Yeptris::JSON.load(json)).to eq(JSON.parse(json)), json
+      end
+    end
+
+    it "walk_tape keeps the frames with strict forced on" do
+      require "yeptris/ffi"
+      CRASHERS.each do |json|
+        tape = ::Yeptris::FFI::JsonTape.new
+        rc = ::Yeptris::FFI.yeptris_parse_json_tape(json, json.bytesize, tape)
+        expect(rc).to eq(::Yeptris::FFI::OK)
+        begin
+          expect(Yeptris::JSON.walk_tape(json, tape, true)).to eq(JSON.parse(json))
+        ensure
+          ::Yeptris::FFI.yeptris_tape_free(tape)
+        end
+      end
+    end
+
+    it "walk_strict keeps the frames with strict forced on" do
+      require "yeptris/ffi"
+      CRASHERS.each do |json|
+        gate = ::Yeptris::Document.parse_json(json)
+        begin
+          cols = ::Yeptris::FFI::ValueColumns.new
+          st = ::Yeptris::FFI.yeptris_value_drain_columns(
+            json, json.bytesize, ::Yeptris::FFI::SCHEMA_12_CORE, cols
+          )
+          expect(st).to eq(::Yeptris::FFI::OK)
+          begin
+            expect(Yeptris::JSON.walk_strict(cols, true)).to eq(JSON.parse(json))
+          ensure
+            ::Yeptris::FFI.yeptris_value_free_columns(cols)
+          end
+        ensure
+          gate.free
+        end
+      end
+    end
+  end
+
+  describe "the marshal lane honors the duplicate-key contract (issue #37)" do
+    # canon's dependent CI: windows-latest has no native ext, and the
+    # marshal route took flags hardcoded to 0 — last-wins under json
+    # >= 3 while the resolved gem raises. Force the lane the way the
+    # missing native ext forces it: Native undefined for the call.
+    around do |example|
+      had_native = defined?(::Yeptris::Native)
+      native_const = ::Yeptris::Native if had_native
+      ::Yeptris.send(:remove_const, :Native) if had_native
+      example.run
+    ensure
+      ::Yeptris.const_set(:Native, native_const) if had_native
+    end
+
+    it "raises on duplicate keys when the resolved json gem raises" do
+      skip "resolved json gem is 2.x (last-wins)" unless ::JSON::VERSION.to_f >= 3
+
+      expect { Yeptris::JSON.load('{"a":1,"a":2}') }
+        .to raise_error(Yeptris::JSON::ParseError, /duplicate key/)
+    end
+
+    it "answers last-wins when the resolved json gem is 2.x" do
+      skip "resolved json gem is >= 3 (raises)" if ::JSON::VERSION.to_f >= 3
+
+      expect(Yeptris::JSON.load('{"a":1,"a":2}')).to eq({ "a" => 2 })
+    end
+  end
+
+  describe "the YAML surface keeps the Psych contract (default-safety)" do
+    it "JSON-shaped YAML with a trailing comma parses like Psych" do
+      expect(Yeptris::YAML.load('{"a": [1,]}')).to eq({ "a" => [1] })
+    end
+
+    it "'1e3' as YAML is a Psych String, not a Float" do
+      expect(Yeptris::YAML.load('{"a": 1e3}')).to eq({ "a" => "1e3" })
+    end
+
+    it "YAML.load never silently switches engines by input shape" do
+      # the same bytes, two surfaces, two honest contracts
+      json_text = '{"a": 1e3}'
+      expect(Yeptris::YAML.load(json_text)).to eq({ "a" => "1e3" })
+      expect(Yeptris::JSON.load(json_text)).to eq({ "a" => 1000.0 })
+    end
+  end
+end
