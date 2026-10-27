@@ -232,13 +232,11 @@ module Yeptris
     attach_function :yeptris_marshal_node_ex,
                     %i[yeptris_node uint32 pointer pointer], :int
     attach_function :yeptris_marshal_free, [:pointer], :void
-    # yeptris-ruby#322: the dump face — guarded (the attachment helper
-    # records misses into @missing; a hard attach would fail every
-    # engine < 0.6.45)
-    if HAVE_ALL
-      attach_function :yeptris_json_from_marshal,
-                      %i[pointer size_t int pointer pointer], :int
-    end
+    # yeptris-ruby#322: the dump face (engine 0.6.45+; the attachment
+    # helper records the miss into @missing on older libraries —
+    # MARSHAL_JSON goes false and the dump keeps the per-node walk)
+    attach_function :yeptris_json_from_marshal,
+                    %i[pointer size_t int pointer pointer], :int
     # The bulk child drain (#168's quadratic): O(n) iteration for
     # #each/#each_pair. Engines without it fall back to the per-index
     # walk (correct, quadratic).
