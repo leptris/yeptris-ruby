@@ -1,0 +1,150 @@
+= yeptris — YAML for Ruby at libleptris speed
+
+An FFI-based (no C extension) Ruby YAML library over
+https://github.com/leptris/yeptris[libyeptris] — the YAML counterpart
+of libleptris. Psych-compatible semantics, one shared library, zero
+compilation at install.
+
+Part of the yeptris program: *the best (multiple dimensions)
+YAML/JSON parser/builder ever* — conformance, performance,
+safety/hardening, API surfaces, transport correctness, and trust,
+held simultaneously, in C, Ruby, Rust, and JS. This binding is the
+most complete surface: the Psych drop-in namespace, JSON.parse
+parity with the strict duplicate-key contract, CBOR, and ValueML,
+tracking every libyeptris release in lockstep. The achievement
+program lives in the engine's PLAN.md ("The best-ever program").
+
+== Install (development)
+
+The gem loads a shared `libyeptris` — from `YEPTRIS_LIB_PATH`, a
+vendored `lib/platform/<tag>/` copy, or the system paths. For
+development against a local build:
+
+....
+# the sibling C checkout: ~/src/leptris/yeptris
+cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_SHARED=ON
+cmake --build build
+
+cd ~/src/leptris/yeptris-ruby
+YEPTRIS_LIB_PATH=../yeptris/build/src/libyeptris.dylib bundle exec rspec
+....
+
+Without `YEPTRIS_LIB_PATH` the spec helper falls back to a vendored
+`lib/platform/<tag>/` copy, then to the sibling checkout's
+`build-validate` — any `libyeptris.{so,dylib,dll}` path works.
+
+== Usage
+
+[source,ruby]
+----
+require "yeptris"
+
+Yeptris::YAML.load("name: yeptris\nrating: 10\n")
+# => {"name" => "yeptris", "rating" => 10}
+
+# brace mixed hashes on Ruby 3.x: a trailing symbol key otherwise
+# splits the literal into keywords
+Yeptris::YAML.dump({"name" => "yeptris", "tags" => [:yaml, :fast]})
+
+doc = Yeptris::Document.parse(config_yaml)
+doc.root["server"]["port"].to_i
+doc.serialize
+----
+
+`Yeptris::YAML.load` defaults to Psych's YAML 1.1 implicit typing
+(`yes` is `true`, `017` is octal); pass `schema: :core_12` for YAML
+1.2 core semantics. Dump builds through the library's DOM mutation
+API, so the writer's sizing/escape machinery applies to synthesized
+trees unchanged.
+
+Handles are document-scoped: `Document#free` releases everything
+(one C call), a GC finalizer backs it up, and any use after free
+raises `Yeptris::FreedError` — never a segfault.
+
+== Two load surfaces: YAML and strict JSON
+
+`Yeptris::YAML.load` keeps the Psych contract for EVERY input —
+including JSON-shaped ones. `{"a": [1,]}` is legal flow YAML (spec
+production [141] allows the trailing comma); `"1e3"` is a Psych
+String. These semantics never flip because input happens to look
+like JSON.
+
+`Yeptris::JSON.load` is the STRICT RFC 8259 surface — exact
+`JSON.parse` semantics by construction (spec-pinned in
+`spec/json_parity_spec.rb`: every value and every error case,
+Bignum integers, exponent-only floats, duplicate keys). Engines,
+fastest first:
+
+1. **Native materializer** (opt-in build; see below): a fused C scan
+   → `VALUE` parser. Order-alternating interleaved profile, 152 KB /
+   ~29k-value corpus, Ruby 3.4:
++
+....
+CI referee (gated at 1.05 on both platforms, order-alternating
+interleave, N=200; prefix-hashed token cache):
+  ubuntu (x86_64)   mean 0.745x  vs JSON.parse, 200/200 head-to-head
+  macos  (arm64)    mean 0.759x  vs JSON.parse, 169/200 head-to-head
+....
+
+The parse-window GC strategy is per-arch and runtime-switchable:
+`Yeptris::Native.gc_mode` / `YEPTRIS_NATIVE_GC` = `:none`
+(steady-state: +0 heap pages, the stdlib's own GC cadence — the
+default on arm64) or `:disable` (no GC during the parse — the
+default on x86_64, faster where pages are free). On a LOADED x86_64
+box prefer `:none`: `:disable` grows ~478 heap pages per 50 parses,
+and page growth under contention is exactly the loaded-box
+regression. `:start` (in-window collection) measured 8x — dead.
+2. **Record-drain fallback** (always available): the strict-JSON
+   validator gates, then the value records convert without the Psych
+   quirk table — exact parity with engine 1, spec-pinned.
+
+The committed profile (`benchmark/json_profile.rb`) is the fair
+benchmark of record — any performance claim runs through it.
+
+=== Building the native materializer (opt-in)
+
+....
+cd ext/yeptris_native
+YEPTRIS_LIB_PATH=/path/to/libyeptris.dylib ruby extconf.rb && make
+cp native.bundle ../../lib/yeptris/   # or .so on Linux
+....
+
+`require "yeptris"` picks it up automatically (`Yeptris::JSON` then
+uses it; missing builds silently use the fallback — the gem installs
+without compiling).
+
+== Shipped beyond the original plan
+
+* The columnar value drain (bulk, pre-converted typed columns — the
+  load fast path) and the bulk DOM builder (one `document_build`
+  call per dump).
+* **Ruby Marshal 4.8 emission** (libyeptris >= 0.1.11): the C side
+  converts value records into Marshal bytes; one `Marshal.load`
+  materializes the whole graph. ~10× faster than the columnar walk
+  on JSON-shaped input, ~5× on YAML, ~50× on the per-node DOM walk
+  (`Node#to_ruby` becomes bulk). Alias identity preserved through
+  object links; merge keys and timestamps return UNSUPPORTED for the
+  record-walk fallback.
+* `Yeptris::Psych` — the Psych-compatible namespace with the ported
+  Psych suite (143 specs), `.tml` corpora conformance, and the
+  Encodable object protocol (`include Yeptris::Psych::Encodable` +
+  `encode_with`/`init_with` — no `respond_to?`, no ivar reflection;
+  the library never reaches into an object's internals).
+** CO-EXISTENCE (issue #69): `require "yeptris/psych"` loads the
+   namespace WITHOUT touching the top-level `Psych` constant — it
+   coexists with stdlib psych in ANY load order. The process-
+   exclusive drop-in rebind (`::Psych = Yeptris::Psych`) is now
+   OPT-IN: `require "yeptris/psych/drop_in"`. Once the drop-in runs,
+   stdlib psych must NOT be loaded afterwards (its require re-opens
+   the rebound module and clobbers constants). Bundles that cannot
+   control the load order (activesupport et al.) should use
+   `Yeptris::Psych` / `Yeptris::YAML` directly.
+** `Yeptris::YAML.safe_load(yaml, permitted_classes: [], aliases:
+   false)` — Psych's safe_load semantics on the native surface:
+   plain data by default; a leaf that would materialize to a
+   non-permitted class (a compat_11 date) raises
+   `Yeptris::Psych::DisallowedClass`; alias use without `aliases:
+   true` raises `Yeptris::Psych::AliasesError`.
+* Lockstep versioning with the C library
+  (`{c-semver}.{gem-patch}`); releases published from the C repo's
+  workflow through the RubyGems trusted publisher.

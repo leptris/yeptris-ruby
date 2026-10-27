@@ -1,0 +1,96 @@
+name: published-gem smoke
+
+# Installs the PUBLISHED gem from rubygems (not the checkout) on every
+# released platform/Ruby combination and round-trips load + the psych
+# drop-in + JSON. Guards the packaging (per-minor natives, vendored
+# DLLs, the darwin stamp) against regressions on the artifact users
+# actually install — the guard #318 needed (the teptris-ruby template).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "gem version (default: latest)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  install-smoke:
+    name: ${{ matrix.os }}${{ matrix.ruby && format(' ruby {0}', matrix.ruby) || '' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04-arm }
+          - { os: ubuntu-latest,      ruby: "3.0" }
+          - { os: ubuntu-latest,      ruby: "3.4" }
+          - { os: macos-15 }
+          - { os: macos-15-intel }
+          - { os: macos-26 }
+          - { os: windows-latest,     platform: x64-mingw-ucrt,     ruby: "3.1" }
+          - { os: windows-latest,     platform: x64-mingw-ucrt,     ruby: "3.2" }
+          - { os: windows-latest,     platform: x64-mingw-ucrt,     ruby: "3.3" }
+          - { os: windows-latest,     platform: x64-mingw-ucrt,     ruby: "3.4" }
+          - { os: windows-latest,     platform: x64-mingw-ucrt,     ruby: "4.0" }
+          - { os: windows-latest,     platform: x64-mingw32,        ruby: "3.0" }
+          - { os: windows-11-arm,     platform: aarch64-mingw-ucrt, ruby: "3.4" }
+          - { os: windows-11-arm,     platform: aarch64-mingw-ucrt, ruby: "4.0" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby || '3.4' }}
+
+      - name: Install the published gem and round-trip
+        shell: bash
+        run: |
+          V="${{ inputs.version }}"
+          PLAT="${{ matrix.platform && format('--platform {0}', matrix.platform) || '' }}"
+          WANT_PLAT="${PLAT#--platform }"
+          GEMHOME=$(gem env home 2>/dev/null || gem env gemdir)
+          for attempt in 1 2 3 4 5; do
+            if [ -n "$V" ]; then
+              gem install yeptris --version "$V" $PLAT
+            else
+              gem install yeptris $PLAT
+            fi
+            # a platform leg MUST resolve the platform gem: a
+            # just-pushed platform file can lag the resolver index
+            # (rubygems falls back to the pure gem silently). The
+            # check is the filesystem — the platform gem's unpack dir
+            # carries the platform suffix; a spec-API probe here was
+            # flaky on windows ruby
+            if [ -z "$WANT_PLAT" ]; then
+              break
+            fi
+            if ls -d "$GEMHOME"/gems/yeptris-*-"$WANT_PLAT" >/dev/null 2>&1; then
+              echo "resolved the $WANT_PLAT platform gem"
+              break
+            fi
+            echo "attempt $attempt: the $WANT_PLAT gem dir is absent — index may lag"
+            gem uninstall yeptris --all --executables --force >/dev/null 2>&1 || true
+            sleep 60
+          done
+          # an exhausted retry loop leaves the last uninstall in
+          # place — the smoke needs a gem regardless
+          if ! ls -d "$GEMHOME"/gems/yeptris-* >/dev/null 2>&1; then
+            LATEST=$(curl -s https://rubygems.org/api/v1/versions/yeptris/latest.json | sed 's/.*"version":"\([^"]*\)".*/\1/')
+            gem install yeptris --version "${V:-$LATEST}" $PLAT
+          fi
+          # Ruby 3.0's RubyGems (3.2) can mis-resolve --platform and
+          # pull the musl gem onto a glibc host; verify and correct
+          # via the explicit gem file (newer RubyGems legs are exact)
+          if gem list -d yeptris 2>/dev/null | grep -q "x86_64-linux-musl" && [ "$(uname -s)" = "Linux" ] && ! ldd --version 2>&1 | grep -qi musl; then
+            echo "old RubyGems pulled the musl gem on glibc — reinstalling the exact platform"
+            gem uninstall yeptris --all --executables --force >/dev/null 2>&1 || true
+            V2="${V:-$(curl -s https://rubygems.org/api/v1/versions/yeptris/latest.json | sed 's/.*"version":"\([^"]*\)".*/\1/')}"
+            [ -n "$V2" ] || { echo "cannot resolve the latest version to reinstall"; exit 1; }
+            curl -fsSL "https://rubygems.org/downloads/yeptris-$V2-x86_64-linux.gem" -o /tmp/yeptris-plat.gem
+            gem install /tmp/yeptris-plat.gem
+          fi
+          ruby scripts/gem_smoke.rb

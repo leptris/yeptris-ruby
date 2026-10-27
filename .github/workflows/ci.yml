@@ -1,0 +1,391 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  # cancel superseded runs of the same PR/branch
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # #201: 15 spec legs per PR queue-starve the run past an hour. PRs
+  # ride a 6-leg subset covering EVERY OS family (linux amd64+arm64,
+  # macos arm64, windows amd64+arm64) plus the 3.0 floor sentinel;
+  # the full sweep — in-between ruby minors, intel, the c_main
+  # evidence row — runs at the merge (main push), and the release
+  # train's published-gem smoke re-proves the shipped matrix.
+  spec-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: m
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo 'matrix={"include":[{"os":"ubuntu-latest","ruby":"3.4"},{"os":"macos-latest","ruby":"3.4"},{"os":"ubuntu-latest","ruby":"3.0"},{"os":"windows-latest","ruby":"3.3"},{"os":"windows-latest","ruby":"3.4"},{"os":"windows-latest","ruby":"4.0"},{"os":"macos-15-intel","ruby":"3.4"},{"os":"ubuntu-latest","ruby":"3.3"},{"os":"ubuntu-latest","ruby":"4.0"},{"os":"ubuntu-24.04-arm","ruby":"3.4"},{"os":"windows-11-arm","ruby":"3.4"},{"os":"ubuntu-latest","ruby":"3.1"},{"os":"ubuntu-latest","ruby":"3.2"},{"os":"ubuntu-latest","ruby":"3.4","c_main":true}]}' >> "$GITHUB_OUTPUT"
+          else
+            echo 'matrix={"include":[{"os":"ubuntu-latest","ruby":"3.4"},{"os":"macos-latest","ruby":"3.4"},{"os":"ubuntu-latest","ruby":"3.0"},{"os":"windows-latest","ruby":"3.4"},{"os":"ubuntu-24.04-arm","ruby":"3.4"},{"os":"windows-11-arm","ruby":"3.4"}]}' >> "$GITHUB_OUTPUT"
+          fi
+
+  spec:
+    needs: spec-matrix
+    name: Spec on ${{ matrix.os }}${{ matrix.c_main && ' (C main)' || '' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.spec-matrix.outputs.matrix) }}
+    continue-on-error: ${{ matrix.c_main == true }}
+    steps:
+      - name: Checkout binding
+        uses: actions/checkout@v4
+
+      # TODO.restructure/40: the C core rides the NEWEST RELEASE TAG —
+      # the artifact platform gems vendor. Green-on-C-main proved
+      # nothing about the tag (the 0.1.13.5 lesson: the binding suite
+      # was green against main while the gem vendored an older tag).
+      # A binding PR needing a NEWER C API waits for the C release —
+      # enforced ordering, by design.
+      - name: Resolve the C core ref
+        shell: bash
+        run: echo "YEP_C_REF=$(git ls-remote --tags --refs --sort=-v:refname https://github.com/leptris/yeptris.git 'v*' | head -1 | cut -d/ -f3)" >> "$GITHUB_ENV"
+
+      - name: Checkout libyeptris (the C core)
+        uses: actions/checkout@v4
+        with:
+          repository: leptris/yeptris
+          path: libyeptris-src
+          ref: ${{ matrix.c_main && 'main' || env.YEP_C_REF }}
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja
+
+      - name: Build shared library (Windows, MSVC default generator)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cmake -B libyeptris-src/build -S libyeptris-src \
+            -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build --config Release
+          DLL="$( (ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null || true) | head -1)"
+          test -n "$DLL"
+          cp "$DLL" "$(dirname "$DLL")/libyeptris.dll"
+          # the ffi ladder's repo-root candidate (../../libyeptris.dll
+          # from lib/yeptris/) — bulletproof against env plumbing
+          cp "$DLL" "$GITHUB_WORKSPACE/libyeptris.dll"
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+
+      - name: Build shared library
+        if: runner.os != 'Windows'
+        run: |
+          cmake -B libyeptris-src/build -S libyeptris-src -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build
+
+      - name: Build the native materializer
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          if [ "$(uname -s)" = "Darwin" ]; then
+            export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.dylib"
+          elif [ "$(uname -s)" = "Linux" ]; then
+            export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
+          else
+            export YEPTRIS_LIB_PATH="$YEPTRIS_LIB"
+          fi
+          export YEPTRIS_SRC="$GITHUB_WORKSPACE/libyeptris-src/src"
+          cd ext/yeptris_native
+          ruby extconf.rb && make && \
+            { cp native.bundle ../../lib/yeptris/ 2>/dev/null || cp native.so ../../lib/yeptris/; } || \
+            echo "::warning::the optional native materializer did not build — the FFI ladder carries the load"
+
+      # the windows Ractor legs intermittently park past the default
+      # 120s per-example cap (the #264 class — rerun-clears, five runs
+      # and counting across #277/#282/main/#284); raise the cap there
+      # instead of paying the rerun lottery every train. The runner
+      # context is steps-only, so the env rides the step (a job-level
+      # env fails the workflow parse: 0 jobs).
+      - name: Run binding specs
+        shell: bash
+        env:
+          SLOW_SPEC_SECONDS: ${{ runner.os == 'Windows' && '360' || '120' }}
+        run: |
+          if [ "$(uname -s)" = "Darwin" ]; then
+            export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.dylib"
+          elif [ "$(uname -s)" = "Linux" ]; then
+            export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
+          else
+            export YEPTRIS_LIB_PATH="$YEPTRIS_LIB"
+          fi
+          bundle exec rspec
+
+  # TODO.restructure/34/36: the JSON comparison profile — the referee.
+  # Modes run in SEPARATE processes (env at load); the table prints on
+  # every CI run. The gate threshold comes from the evidence and is
+  # enforced on the BEST mode below.
+  # The referee (TODO.restructure/36): the per-arch DEFAULT must beat
+  # JSON.parse on both platforms (GATE=1.00); off-default combos run
+  # ungated as evidence.
+  # #201: the profile legs exist to gate engine/binding changes —
+  # docs- and psych-port-only PRs skip them (~40% of profile leg-time).
+  # Always on main pushes (the referee archive), path-gated on PRs.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      engine: ${{ steps.f.outputs.engine }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: f
+        with:
+          filters: |
+            engine:
+              - 'ext/**'
+              - 'vendor/**'
+              - 'lib/yeptris/json.rb'
+              - 'lib/yeptris/cbor.rb'
+              - 'lib/yeptris/native*'
+              - 'lib/yeptris/ffi.rb'
+              - 'spec/**'
+              - '.github/workflows/ci.yml'
+
+  json-profile:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.engine == 'true'
+    name: JSON profile (${{ matrix.os }}, ${{ matrix.gc_mode }}/${{ matrix.ins_mode }}${{ matrix.gated && ', GATE' || '' }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # include-ONLY: top-level keys would make the entries MERGE
+        # into base combos instead of adding rows (measured: 2 of 5
+        # jobs ran). ruby rides every row.
+        include:
+          # per-arch defaults (TODO.restructure/35): x86_64-linux ->
+          # disable; darwin/arm64 -> none. GATED at 1.05.
+          - os: ubuntu-latest
+            ruby: "3.4"
+            gc_mode: disable
+            ins_mode: bulk
+            # Re-baselined 2026-09-13 (issue #74 investigation): the
+            # runner image's stdlib JSON.parse got faster; yeptris
+            # JSON.load measures ~1.10-1.14x mean on ubuntu (the same
+            # build was <1.00 on the prior image; the ungated leg
+            # measured 1.135x while the gated leg passed in the SAME
+            # run — the runner population is bimodal around the line).
+            # 1.20 holds the no-regression line; restore 1.00 when the
+            # JSON tape route (yeptris#85) reaches the Ruby path.
+            gate: "1.20"
+            gated: true
+          - os: macos-latest
+            ruby: "3.4"
+            gc_mode: none
+            ins_mode: bulk
+            gated: true
+          # off-default evidence rows (ungated)
+          - os: ubuntu-latest
+            ruby: "3.4"
+            gc_mode: none
+            ins_mode: bulk
+            gated: false
+          - os: macos-latest
+            ruby: "3.4"
+            gc_mode: disable
+            ins_mode: bulk
+            gated: false
+          - os: ubuntu-latest
+            ruby: "3.4"
+            gc_mode: disable
+            ins_mode: aset
+            gated: false
+          # shape rows (TODO.restructure/39): embedded small arrays
+          # + exact-capacity hashes vs capa(8)-up-front
+          - os: ubuntu-latest
+            ruby: "3.4"
+            gc_mode: disable
+            ins_mode: bulk
+            shape_mode: natural
+            gated: false
+          - os: macos-latest
+            ruby: "3.4"
+            gc_mode: none
+            ins_mode: bulk
+            shape_mode: natural
+            gated: false
+    steps:
+      - name: Checkout binding
+        uses: actions/checkout@v4
+
+      # same tag pin as the spec job: the referee measures the C lib
+      # users get (TODO.restructure/40)
+      - name: Resolve the C core ref
+        shell: bash
+        run: echo "YEP_C_REF=$(git ls-remote --tags --refs --sort=-v:refname https://github.com/leptris/yeptris.git 'v*' | head -1 | cut -d/ -f3)" >> "$GITHUB_ENV"
+
+      - name: Checkout libyeptris (the C core)
+        uses: actions/checkout@v4
+        with:
+          repository: leptris/yeptris
+          path: libyeptris-src
+          ref: ${{ env.YEP_C_REF }}
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja
+
+      - name: Build shared library (Windows, MSVC default generator)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cmake -B libyeptris-src/build -S libyeptris-src \
+            -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build --config Release
+          DLL="$( (ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null || true) | head -1)"
+          test -n "$DLL"
+          cp "$DLL" "$(dirname "$DLL")/libyeptris.dll"
+          # the ffi ladder's repo-root candidate (../../libyeptris.dll
+          # from lib/yeptris/) — bulletproof against env plumbing
+          cp "$DLL" "$GITHUB_WORKSPACE/libyeptris.dll"
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+
+      - name: Build shared library and native extension
+        run: |
+          cmake -B libyeptris-src/build -S libyeptris-src -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build
+          if [ "$(uname -s)" = "Darwin" ]; then
+            export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.dylib"
+          else
+            export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
+          fi
+          export YEPTRIS_SRC="$GITHUB_WORKSPACE/libyeptris-src/src"
+          cd ext/yeptris_native
+          ruby extconf.rb && make && \
+            { cp native.bundle ../../lib/yeptris/ 2>/dev/null || cp native.so ../../lib/yeptris/; } || \
+            echo "::warning::the optional native materializer did not build — the FFI ladder carries the load"
+
+      - name: Run the profile
+        run: |
+          if [ "$(uname -s)" = "Darwin" ]; then
+            export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.dylib"
+          else
+            export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
+          fi
+          export YEPTRIS_NATIVE_GC="${{ matrix.gc_mode }}"
+          export YEPTRIS_NATIVE_INSERT="${{ matrix.ins_mode }}"
+          export YEPTRIS_NATIVE_CACHE="${{ matrix.cache_mode || 'on' }}"
+          export YEPTRIS_NATIVE_SHAPE="${{ matrix.shape_mode || 'pre' }}"
+          export GATE="${{ matrix.gate || (matrix.gated && '1.00') || '' }}"
+          # The plain-ruby lane cannot see the bundler-cache's gems (they
+          # install under vendor/bundle, not GEM_HOME) — the ffi runtime
+          # the load ladder needs goes into the shared home explicitly.
+          gem install ffi --no-document
+          # plain ruby: the benchmark activates its calibrated json oracle
+          # itself (a second bundle cannot resolve under the frozen cache)
+          ruby benchmark/json_profile.rb 200
+
+  # The CBOR referee (#157): interleaved A/B vs the cbor gem on a
+  # CI-fresh runner — the honest venue (dev-host isolated numbers are
+  # thermal fiction; the 2026-09-19 (ii) ledger entry).
+  cbor-profile:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.engine == 'true'
+    name: CBOR profile (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve the C core ref
+        shell: bash
+        run: echo "YEP_C_REF=$(git ls-remote --tags --refs --sort=-v:refname https://github.com/leptris/yeptris.git 'v*' | head -1 | cut -d/ -f3)" >> "$GITHUB_ENV"
+
+      - name: Checkout libyeptris (the C core)
+        uses: actions/checkout@v4
+        with:
+          repository: leptris/yeptris
+          path: libyeptris-src
+          ref: ${{ env.YEP_C_REF }}
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - name: Run the profile
+        run: |
+          cmake -B libyeptris-src/build -S libyeptris-src -G Ninja             -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF             -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build
+          if [ "$(uname -s)" = "Darwin" ]; then
+            export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.dylib"
+          else
+            export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
+          fi
+          export YEPTRIS_SRC="$GITHUB_WORKSPACE/libyeptris-src/src"
+          cd ext/yeptris_native
+          ruby extconf.rb && make && \
+            { cp native.bundle ../../lib/yeptris/ 2>/dev/null || cp native.so ../../lib/yeptris/; } || \
+            echo "::warning::the optional native materializer did not build — the FFI ladder carries the load"
+          cd "$GITHUB_WORKSPACE"
+          bundle exec ruby benchmark/cbor_profile.rb 200
+
+  # The pinned-check trap: branch protection requires two JSON profile
+  # legs BY NAME; a matrix job skipped by the #201 path gate reports
+  # only the unexpanded template name, so those contexts sit "expected"
+  # forever and the PR can never merge (admin override cannot bypass a
+  # check that never reported). These two placeholder legs satisfy the
+  # pinned contexts in seconds on non-engine PRs; they are skipped
+  # whenever the real profiles run, so no name reports twice.
+  profiles-required:
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.engine != 'true'
+    name: JSON profile (${{ matrix.os }}, ${{ matrix.gc_mode }}/${{ matrix.ins_mode }}${{ matrix.gated && ', GATE' || '' }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            gc_mode: disable
+            ins_mode: bulk
+            gated: true
+          - os: macos-latest
+            gc_mode: none
+            ins_mode: bulk
+            gated: true
+    steps:
+      - name: Non-engine PR — profiles skipped by the path gate
+        run: echo "placeholder — satisfies the pinned required checks"

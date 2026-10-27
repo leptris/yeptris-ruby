@@ -1,0 +1,284 @@
+# frozen_string_literal: true
+
+class Yeptris::Document
+  attr_reader :c_ptr
+
+  # Shared between the instance and its GC finalizer (Procs close over
+  # variables by reference) — the leptris-ruby double-free fix: the
+  # explicit free path and the finalizer both flip the same flag.
+  Freed = Struct.new(:state) # :alive | :freed
+
+  # The raw C handle — the Yeptris::Node wrappers cache by its
+  # address; stream-children wrappers (Document.without_finalizer)
+  # carry it without registering a finalizer (#182).
+  attr_reader :c_ptr
+
+  # The schema this document was parsed with (a parse property).
+  attr_reader :parse_schema
+
+  def initialize(c_ptr = nil, freed = Freed.new(:alive), parse_schema = :core_12)
+    # The pointer is produced by the FFI parse/create calls; a nil (or
+    # non-pointer) argument is an API misuse — Document.parse and
+    # Document.create are the entry points. Fail with that guidance
+    # instead of a NoMethodError from the finalizer guard below (the
+    # FFI::Pointer#null? probe does not exist on nil).
+    unless c_ptr.is_a?(::FFI::Pointer)
+      raise ArgumentError,
+            "a document FFI pointer is required — build documents with " \
+            "Yeptris::Document.parse or Yeptris::Document.create"
+    end
+    @c_ptr = c_ptr
+    @freed = freed
+    @parse_schema = parse_schema
+    @readonly = false
+    # Strong wrapper cache keyed on the C node address: the same C node
+    # always yields the same Ruby object (identity for aliases/eql?),
+    # cleared at free — no stale entries, no GC-race weak maps.
+    @wrapper_cache = {}
+    ObjectSpace.define_finalizer(self, self.class.finalize(c_ptr)) unless c_ptr.null?
+  end
+
+  def self.parse(yaml, schema: :core_12, max_depth: 0)
+    yaml = Yeptris.read_input(yaml)
+    yaml = yaml.to_s
+    status = ::FFI::MemoryPointer.new(:int)
+    doc =
+      if schema == :core_12 && max_depth.zero?
+        Yeptris::FFI.yeptris_parse(yaml, yaml.bytesize, status)
+      else
+        opts = Yeptris::FFI::ParseOptions.new
+        opts[:schema] = schema == :compat_11 ? Yeptris::FFI::SCHEMA_11_COMPAT : Yeptris::FFI::SCHEMA_12_CORE
+        opts[:max_depth] = max_depth
+        Yeptris::FFI.yeptris_parse_ex(yaml, yaml.bytesize, opts, status)
+      end
+    if doc.null?
+      # NULL + OK is the legal empty stream (no documents): nil, like
+      # stdlib. The status out-param is the discriminator — the TLS
+      # error message cannot serve (a stale error from an earlier
+      # parse persists on the thread).
+      return nil if status.read_int.zero?
+
+      raise Yeptris::ParseError,
+            "parse failed: #{Yeptris::FFI.last_error_message}"
+    end
+    wrap_schema(doc, schema)
+  end
+
+  def self.parse_json(json)
+    json = Yeptris.read_input(json)
+    json = json.to_s
+    doc = Yeptris::FFI.yeptris_parse_json(json, json.bytesize, nil)
+    raise Yeptris::ParseError,
+          "json parse failed: #{Yeptris::FFI.last_error_message}" if doc.null?
+
+    wrap_schema(doc, :core_12) # strict JSON is core by construction
+  end
+
+  # An empty document for from-scratch construction (TODO.impl/11 p3).
+  # schema: :compat_11 types its plain scalars through the Psych-
+  # compatible resolver — the dump faces build with it so a host String
+  # the tree builder kept plain ("1e0") stays a string (#293).
+  def self.create(schema: nil)
+    doc =
+      if schema == :compat_11
+        Yeptris::FFI.yeptris_document_new_schema(Yeptris::FFI::SCHEMA_11_COMPAT)
+      else
+        Yeptris::FFI.yeptris_document_new
+      end
+    raise Yeptris::Error, "yeptris_document_new failed" if doc.null?
+
+    wrap(doc)
+  end
+
+  # @api private
+  def self.wrap(c_ptr)
+    new(c_ptr)
+  end
+
+  # The schema the document was parsed with (:core_12 / :compat_11) —
+  # host scalar policies (Psych's dot-required float) are conditioned
+  # on it. The parse constructors set the real one; plain wrap keeps
+  # the core_12 default (yeptris_parse's default).
+  def self.wrap_schema(c_ptr, schema)
+    new(c_ptr, Freed.new(:alive), schema)
+  end
+
+  # #182: the stream-children wrapper owns NOTHING (the parent
+  # Document wrapper is the sole freer of the C memory). A plain
+  # Document.new would register a finalizer on a c_ptr we don't own;
+  # a parse_stream on a multi-doc stream would free the same pointer
+  # three times at GC → SIGABRT. This factory builds the wrapper
+  # WITHOUT a finalizer; the wrapper's lifetime follows the owner.
+  def self.without_finalizer(c_ptr)
+    doc = new(c_ptr)
+    ObjectSpace.undefine_finalizer(doc)
+    doc
+  end
+
+  def ensure_alive!
+    raise Yeptris::FreedError, "document is freed" if @freed.state == :freed
+  end
+
+  def free
+    return if @freed.state == :freed
+
+    @freed.state = :freed
+    # stop the GC finalizer BEFORE the C free — it captures the same
+    # pointer, and its firing after this free is the double free
+    ObjectSpace.undefine_finalizer(self)
+    @wrapper_cache.clear
+    Yeptris::FFI.yeptris_document_free(@c_ptr)
+  end
+
+  def freed?
+    @freed.state == :freed
+  end
+
+  def readonly!
+    @readonly = true
+    self
+  end
+
+  def readonly?
+    @readonly
+  end
+
+  # @api private — memo table for readonly materialization: node ids
+  # that already produced their Ruby object keep it (leptris pattern:
+  # readonly documents never change, so the memo is forever valid).
+  def readonly_memo
+    @readonly_memo ||= {}
+  end
+
+  # @api private — the single Node construction path. Query handles
+  # are transient C allocations; the wrapper cache is keyed on the
+  # STABLE node id (yeptris_node_id), so the same node always yields
+  # the same Ruby object no matter which query produced the handle.
+  def wrap_node(c_ptr)
+    ensure_alive!
+    return nil if c_ptr.null?
+
+    id = Yeptris::FFI.yeptris_node_id(c_ptr)
+    @wrapper_cache[id] ||= Yeptris::Node.new(c_ptr, self)
+  end
+
+  def document_count
+    ensure_alive!
+    Yeptris::FFI.yeptris_document_count(@c_ptr)
+  end
+
+  # Root node of stream document i (0-based).
+  def root(index = 0)
+    ensure_alive!
+    wrap_node(Yeptris::FFI.yeptris_document_root(@c_ptr, index))
+  end
+
+  # Bulk build (TODO.impl/15 phase D): one call raises the whole
+  # tree from a flat entry array + blob (see YAML::BulkBuilder).
+  def build_entries(entries, count, blob, blob_len)
+    ensure_alive!
+    Yeptris::FFI.yeptris_document_build(@c_ptr, entries, count, blob, blob_len)
+  end
+
+  def serialize(canonical: false, best_width: 0, explicit_doc_start: false)
+    ensure_alive!
+    len = ::FFI::MemoryPointer.new(:size_t)
+    ptr =
+      if canonical || best_width.positive? || explicit_doc_start
+        opts = Yeptris::FFI::EmitOptions.new
+        opts[:size] = Yeptris::FFI::EmitOptions.size
+        opts[:canonical] = canonical ? 1 : 0
+        opts[:best_width] = best_width
+        opts[:explicit_doc_start] = explicit_doc_start ? 1 : 0
+        Yeptris::FFI.yeptris_serialize_ex(@c_ptr, opts, len)
+      else
+        Yeptris::FFI.yeptris_serialize(@c_ptr, len)
+      end
+    Yeptris::FFI::Owned.string(ptr, len)
+  end
+
+  def serialize_json_compact
+    len = ::FFI::MemoryPointer.new(:size_t)
+    Yeptris::FFI::Owned.string(Yeptris::FFI.yeptris_serialize_json_ex(@c_ptr, len, 1), len)
+  end
+
+  # JSON.pretty_generate's shape; nil indent rides the engine default
+  # (two spaces), any other String's bytes ride verbatim per depth
+  def serialize_json_pretty(indent = nil)
+    ensure_alive!
+    len = ::FFI::MemoryPointer.new(:size_t)
+    data = indent&.b
+    Yeptris::FFI::Owned.string(
+      Yeptris::FFI.yeptris_serialize_json_pretty(@c_ptr, len, data, data ? data.bytesize : 0), len
+    )
+  end
+
+  def serialize_json
+    ensure_alive!
+    len = ::FFI::MemoryPointer.new(:size_t)
+    Yeptris::FFI::Owned.string(Yeptris::FFI.yeptris_serialize_json(@c_ptr, len), len)
+  end
+
+  def to_s
+    serialize
+  end
+
+  # The Ruby object graph of stream document i (Psych-compatible
+  # materialization; alias identity preserved via the memo).
+  def to_ruby(index = 0)
+    ensure_alive!
+    r = root(index)
+    r.nil? ? nil : r.to_ruby
+  end
+
+  # ---- construction conveniences (TODO.impl/11 phase 3) ----
+
+  def new_mapping
+    ensure_alive!
+    wrap_node(Yeptris::FFI.yeptris_node_new_mapping(@c_ptr)) or
+      raise Yeptris::Error, "yeptris_node_new_mapping failed"
+  end
+
+  def new_sequence
+    ensure_alive!
+    wrap_node(Yeptris::FFI.yeptris_node_new_sequence(@c_ptr)) or
+      raise Yeptris::Error, "yeptris_node_new_sequence failed"
+  end
+
+  # style: :plain / :single_quoted / :double_quoted / :literal / :folded.
+  # The value is copied into the document (nothing is borrowed).
+  def new_scalar(text, style = :plain)
+    ensure_alive!
+    code = Yeptris::Node::STYLES.key(style) or
+      raise ArgumentError, "unknown scalar style #{style.inspect}"
+    text = text.to_s
+    n = Yeptris::FFI.yeptris_node_new_scalar(@c_ptr, text, text.bytesize, code)
+    wrap_node(n) or raise Yeptris::Error, "yeptris_node_new_scalar failed"
+  end
+
+  # An alias node: display name + the target it resolves to.
+  def new_alias(target, name)
+    ensure_alive!
+    n = Yeptris::FFI.yeptris_node_new_alias(@c_ptr, target.c_ptr, name, name.bytesize)
+    wrap_node(n) or raise Yeptris::Error, "yeptris_node_new_alias failed"
+  end
+
+  def set_root(node)
+    ensure_alive!
+    rc = Yeptris::FFI.yeptris_document_set_root(@c_ptr, node.c_ptr)
+    Yeptris::FFI.check_status(rc, "yeptris_document_set_root")
+    self
+  end
+
+  # GC safety net (#182): the proc captures ONLY the raw pointer — no
+  # Ruby objects, no wrapper, no freed-flag struct. A finalizer that
+  # closes over the owning wrapper races that wrapper's own sweep
+  # (the classic use-after-free: freed?/free against half-collected
+  # ivars, then a garbage C pointer into yeptris_document_free →
+  # SIGABRT). Explicit #free undefines this finalizer BEFORE the C
+  # free, so the double free cannot happen; finalizers run on the
+  # main thread, so there is no cross-thread window.
+  def self.finalize(c_ptr)
+    proc { Yeptris::FFI.yeptris_document_free(c_ptr) }
+  end
+end

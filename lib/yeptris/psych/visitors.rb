@@ -1,0 +1,545 @@
+# frozen_string_literal: true
+
+require "date"
+require "time"
+require "set"
+
+module Yeptris
+  module Psych
+    module Visitors
+      # The dump-side visitor (Psych's YAMLTree core): an arbitrary
+      # Ruby object graph becomes DOM nodes — anchors for shared
+      # objects, aliases for repeats, the Encodable protocol, and the
+      # !ruby/... tags Psych's own emitter produces.
+      class YAMLTree
+        # stdlib's factory (relaton's db cache calls it): the options
+        # ride our visitor defaults
+        def self.create(options = {}, emitter = nil)
+          new
+        end
+
+        def initialize(schema: nil)
+          @tree = ::Yeptris::Document.create(schema: schema)
+          @names = {}  # object_id -> anchor name
+          @counter = 0
+        end
+
+        def push(obj)
+          @refs = Hash.new(0)
+          @refs[obj.object_id] += 1 # the root counts as a reference
+          count_refs(obj, {})
+          root = visit(obj)
+          @tree.set_root(root) if root
+          self
+        end
+        alias_method :<<, :push # stdlib's dump body pushes via <<
+
+        # stdlib Psych.dump's tail: `visitor.tree.yaml io, options` —
+        # the tree wraps the built document; yaml serializes it
+        # (string return, or writes + returns the io)
+        def tree
+          BuiltDocument.new(@tree)
+        end
+
+        # The raw document (the CBOR encoder consumes the tree
+        # directly; #tree wraps it for stdlib's yaml face)
+        def document
+          @tree
+        end
+
+        def finish
+          @tree.serialize(explicit_doc_start: true)
+        end
+
+        # The built-document handle stdlib's dump tail serializes
+        class BuiltDocument
+          def initialize(doc)
+            @doc = doc
+          end
+
+          def yaml(io = nil, _options = {})
+            out = @doc.serialize(explicit_doc_start: true)
+            return out unless io
+
+            io.write(out)
+            io
+          end
+        end
+
+        # stdlib register()s every object — scalars included — so a
+        # repeated scalar dumps &name/*name (test_float_references,
+        # test_alias_with_time). Containers already route through
+        # anchor_for; this is the scalar arm of the same machinery.
+        def anchored_scalar(obj, text: nil, tag: nil)
+          state, name = anchor_for(obj)
+          return alias_of(obj, name) if state == :alias
+
+          n = scalar(text || obj, tag: tag)
+          n.set_anchor(name) if name
+          remember(obj, n)
+          n
+        end
+
+        def visit(obj)
+          case obj
+          # strings/floats/ints: stdlib yaml_tree does NOT anchor them
+          # (its float test is load-side only) — and CBOR encode
+          # rejects the anchors the cbor profile feeds it
+          when nil, true, false, ::Integer, ::Float, ::String then scalar(obj)
+          when ::Symbol then @tree.new_scalar(":#{obj}", :plain) # psych emits symbols bare, never through visit_String's quoting rules
+          # stdlib visit_DateTime: the class tag carries the type (a
+          # plain timestamp re-loads as Time) — "!ruby/object:DateTime
+          # 2017-04-13 12:00:00.500000000 +09:00", to_s text, one line
+          when ::DateTime
+            anchored_scalar(obj, text: obj.strftime("%F %H:%M:%S.%9N %:z"),
+                            tag: "!ruby/object:DateTime")
+          when ::Date, ::Time then anchored_scalar(obj) # timestamp text, never ivars
+          when ::Hash then visit_hash(obj)
+          when ::Array then visit_array(obj)
+          when ::Struct then visit_struct(obj)
+          when ::Set then visit_set(obj)
+          when Encodable then visit_encode_with(obj)
+          else
+            if obj.instance_of?(::Object)
+              # A BARE Object has no declared state to lose — the
+              # empty !ruby/object form is correct by construction
+              # (an Object with ivars set from outside its class is
+              # outside the encapsulation contract; use a real class
+              # with Encodable for stateful objects).
+              return visit_bare_object(obj)
+            end
+            refuse_dump(obj)
+          end
+        end
+
+        private
+
+        # Psych anchors only objects that appear more than once;
+        # single-occurrence containers dump clean (no &o1 noise)
+        def anchor_for(obj)
+          oid = obj.object_id
+          name = @names[oid]
+          return [:alias, name] if name
+
+          if @refs[oid] < 2
+            return [:none, nil]
+          end
+          name = (@counter += 1).to_s # stdlib: &1, *1
+          @names[oid] = name
+          [:new, name]
+        end
+
+        def count_refs(obj, seen)
+          return if seen.key?(obj.object_id)
+
+          seen[obj.object_id] = true
+          case obj
+          when Hash
+            obj.each_value { |v| @refs[v.object_id] += 1; count_refs(v, seen) }
+          when Array
+            obj.each { |v| @refs[v.object_id] += 1; count_refs(v, seen) }
+          when Struct
+            obj.each_pair { |_k, v| @refs[v.object_id] += 1; count_refs(v, seen) }
+          when Set
+            obj.each { |v| @refs[v.object_id] += 1; count_refs(v, seen) }
+          when ::String, ::Integer, ::Float, ::Symbol, ::Date, ::Time, true, false, nil, ::Numeric
+            # immutables: identity anchors are meaningless
+          else
+            unless obj.instance_of?(::Object)
+              refuse_dump(obj) unless obj.is_a?(Encodable)
+              # Encodable: descend through the PUBLIC protocol so
+              # shared objects inside coder contents still get
+              # anchors — encode_with must be pure (it runs once more
+              # at dump).
+              coder = ::Yeptris::Psych::CoderShim.new(nil)
+              obj.encode_with(coder)
+              case coder.type
+              when :seq
+                coder.seq.each { |v| @refs[v.object_id] += 1; count_refs(v, seen) }
+              when :map
+                coder.each { |_k, v| @refs[v.object_id] += 1; count_refs(v, seen) }
+              end
+            end
+          end
+        end
+
+        def refuse_dump(obj)
+          raise ::Yeptris::DumpError,
+                "cannot dump #{obj.class}: include Yeptris::Psych::Encodable and implement encode_with(coder)"
+        end
+
+        def scalar(obj, tag: nil)
+          # strings route through the builder's plain-safety helper
+          # (one quoting rule, DRY); other scalars are their own text
+          text =
+            if obj.is_a?(::Time)
+              # psych-5's format_time (#300 family 1) — the FIRST cut
+              # put this branch after the Date||Time iso8601 one, dead
+              # code: Psych.dump of a Hash still emitted iso8601 (the
+              # neutral surface alone was pinned)
+              ::Yeptris::YAML::BulkBuilder.time_text(obj)
+            elsif obj.is_a?(::Date)
+              obj.iso8601 # canonical calendar form
+            elsif obj.nil?
+              "" # libyaml's null rendering rides bare (issue #290)
+            elsif obj.is_a?(::Float)
+              ::Yeptris::YAML::BulkBuilder.float_text(obj)
+            else
+              obj.to_s
+            end
+          n =
+            if obj.is_a?(::String) && !tag
+              ::Yeptris::YAML::Builder.build_string(@tree, obj)
+            else
+              @tree.new_scalar(text, :plain)
+            end
+          n.set_tag(tag) if tag
+          n
+        end
+
+        def visit_hash(hash)
+          state, name = anchor_for(hash)
+          return alias_of(hash, name) if state == :alias
+
+          m = @tree.new_mapping
+          remember(hash, m)
+          m.set_anchor(name) if name
+          hash.each do |k, v|
+            if k.nil?
+              # Psych's nil-key form: `! ''` — the explicit tag on an
+              # empty single-quoted key (#300 family 2)
+              key_node = @tree.new_scalar("", :single_quoted)
+              key_node.set_tag("!")
+              m.map_add_node(key_node, visit(v))
+            elsif k.is_a?(::String) && k == "<<"
+              # stdlib yaml_tree: a literal chevron key carries the
+              # explicit !!str tag (single-quoted) so it does not
+              # re-load as a merge
+              key_node = @tree.new_scalar("<<", :single_quoted)
+              key_node.set_tag("tag:yaml.org,2002:str")
+              m.map_add_node(key_node, visit(v))
+            else
+              m.map_add(key_text(k), visit(v))
+            end
+          end
+          m
+        end
+
+        def visit_array(ary)
+          state, name = anchor_for(ary)
+          return alias_of(ary, name) if state == :alias
+
+          s = @tree.new_sequence
+          remember(ary, s)
+          s.set_anchor(name) if name
+          ary.each { |e| s.seq_add(visit(e)) }
+          s
+        end
+
+        def visit_struct(strct)
+          state, name = anchor_for(strct)
+          return alias_of(strct, name) if state == :alias
+
+          m = @tree.new_mapping
+          remember(strct, m)
+          m.set_anchor(name) if name
+          m.set_tag(strct.class.name.to_s.empty? ? "!ruby/struct" : "!ruby/struct:#{strct.class.name}")
+          strct.each_pair { |k, v| m.map_add(key_text(k), visit(v)) }
+          m
+        end
+
+        def visit_set(set)
+          state, name = anchor_for(set)
+          return alias_of(set, name) if state == :alias
+
+          s = @tree.new_sequence
+          remember(set, s)
+          s.set_anchor(name) if name
+          s.set_tag("!ruby/set")
+          set.each { |e| s.seq_add(visit(e)) }
+          s
+        end
+
+        def visit_encode_with(obj)
+          state, name = anchor_for(obj)
+          return alias_of(obj, name) if state == :alias
+
+          coder = ::Yeptris::Psych::CoderShim.new(obj.class.name)
+          obj.encode_with(coder) # the typed public surface
+          # Wrap coder contents in a __init__ sub-mapping so the load
+          # side can dispatch back into obj.init_with(coder) without
+          # library-side ivar reflection (the encapsulation law).
+          init = @tree.new_mapping
+          case coder.type
+          when :scalar
+            init.map_add("__scalar__", scalar(coder.scalar))
+            init.map_add("__tag__", scalar(coder.tag)) if coder.tag
+          when :seq
+            inner = @tree.new_sequence
+            inner.set_tag(coder.tag) if coder.tag
+            coder.seq.each { |e| inner.seq_add(visit(e)) }
+            init.seq_add(inner)
+          else
+            coder.each { |k, v| init.map_add(key_text(k), visit(v)) }
+            init.set_tag(coder.tag) if coder.tag
+          end
+          m = @tree.new_mapping
+          m.set_anchor(name) if name
+          custom = ::Yeptris::Psych.dump_tags[obj.class]
+          m.set_tag(custom || "!ruby/object:#{obj.class.name}")
+          m.map_add("__init__", init)
+          remember(obj, m)
+          m
+        end
+
+        def visit_bare_object(obj)
+          state, name = anchor_for(obj)
+          return alias_of(obj, name) if state == :alias
+
+          m = @tree.new_mapping
+          remember(obj, m)
+          m.set_anchor(name) if name
+          m.set_tag("!ruby/object")
+          m
+        end
+
+        def alias_of(obj, name)
+          @tree.new_alias(@nodes.fetch(obj.object_id), name)
+        end
+
+        def remember(obj, node)
+          (@nodes ||= {})[obj.object_id] = node
+        end
+
+        def key_text(k)
+          k.is_a?(Symbol) ? ":#{k}" : k.to_s
+        end
+
+      end
+
+      # Load side: revival of !ruby/... tags over the parsed Nodes
+      # tree. The Materializer stays the plain-data fast path.
+      class ToRuby
+        def self.visit(node)
+          new.visit(node)
+        end
+
+        # stdlib ToRuby#accept's domain post-pass: normalize the tag
+        # (strip leading !//, ensure tag: unless x-private) and run the
+        # registered block over the revived result (#95 thread)
+        def apply_domain_type(result, node)
+          return result if node.tag.nil? || node.tag.empty?
+
+          key = node.tag.sub(/\A[!\/]*/, "").sub(/(,\d+)\//, '\1:')
+          key = "tag:#{key}" unless key.match?(/\A(?:tag:|x-private)/)
+          entry = ::Yeptris::Psych.domain_types[key]
+          return result unless entry
+
+          _value, block = entry
+          block.call(key, result)
+        end
+
+        def visit(node)
+          @root ||= node
+          result =
+            case node
+            when ::Yeptris::Psych::Nodes::Alias then visit_alias(node)
+            when ::Yeptris::Psych::Nodes::Scalar then visit_scalar(node)
+            when ::Yeptris::Psych::Nodes::Sequence then visit_sequence(node)
+            when ::Yeptris::Psych::Nodes::Mapping then visit_mapping(node)
+            else node&.to_ruby
+            end
+          # stdlib register(): an anchored node's result is THE object
+          # for every alias to that anchor (scalars included)
+          anchors[node.anchor] = result if node.respond_to?(:anchor) && node.anchor
+          # the domain-types post-pass (stdlib ToRuby#accept's tail):
+          # registered blocks transform the revived result per node
+          if node && !::Yeptris::Psych.domain_types.empty?
+            result = apply_domain_type(result, node)
+          end
+          result
+        end
+
+        private
+
+        def anchors
+          @anchors ||= {}
+        end
+
+        def visit_alias(node)
+          name = node.anchor
+          unless anchors.key?(name)
+            target = find_anchored(root_container(node), name)
+            anchors[name] = target ? visit(target) : nil
+          end
+          anchors[name]
+        end
+
+        # the walk for alias targets starts at the first node this
+        # visitor was handed (the document's root)
+        def root_container(_node)
+          @root
+        end
+
+        def find_anchored(node, name)
+          return node if node.anchor == name
+
+          node.children.each do |c|
+            found = find_anchored(c, name)
+            return found if found
+          end
+          nil
+        end
+
+        def visit_scalar(node)
+          node.to_ruby
+        end
+
+        def visit_sequence(node)
+          if node.tag == "!ruby/set"
+            set = ::Set.new
+            anchors[node.anchor] = set if node.anchor
+            node.children.each { |c| set << visit(c) }
+            return set
+          end
+          ary = []
+          anchors[node.anchor] = ary if node.anchor
+          node.children.each { |c| ary << visit(c) }
+          ary
+        end
+
+        def visit_mapping(node)
+          tag = node.tag
+          return hash_into({}, node) if tag.nil? || tag.empty?
+
+          case tag
+          when "!ruby/set"
+            set = Set.new
+            anchors[node.anchor] = set if node.anchor
+            node.children.each_slice(2) { |_k, v| set << visit(v) }
+            set
+          when /\A!ruby\/struct(?::(.+))?\z/
+            klass = resolve_class(Regexp.last_match(1).to_s)
+            pairs = {}
+            anchors[node.anchor] = nil # placeholder: filled below
+            node.children.each_slice(2) do |k, v|
+              pairs[visit(k).to_s.sub(/\A:/, "")] = visit(v)
+            end
+            keys = pairs.keys.map(&:to_sym)
+            built =
+              if klass && klass <= Struct
+                klass.new(*pairs.values)
+              else
+                Struct.new(*keys).new(*pairs.values)
+              end
+            anchors[node.anchor] = built if node.anchor
+            built
+          when /\A!ruby\/object(?::(.+))?\z/
+            klass = resolve_class(Regexp.last_match(1).to_s)
+            revive_object(klass, node)
+          else
+            # Psych.load_tags first (the class registry, #95 bug 4);
+            # anything else stays the plain mapping
+            if (klass = ::Yeptris::Psych.load_tags[tag])
+              revive_tagged(klass, node)
+            else
+              hash_into({}, node)
+            end
+          end
+        end
+
+        # stdlib visit_hash's merge branch, verbatim in structure: the
+        # key's SHAPE decides (an explicit !!str '<<' is a literal key,
+        # not a merge), the VALUE's node kind picks the arm, and every
+        # merge is TypeError-guarded (a bad element keeps the whole
+        # '<<' pair literal — merges are all-or-nothing).
+        def hash_into(h, node)
+          anchors[node.anchor] = h if node.anchor
+          node.children.each_slice(2) do |k, v|
+            key = visit(k)
+            val = visit(v)
+            if key == "<<" && k.tag != "tag:yaml.org,2002:str"
+              case v
+              when ::Yeptris::Psych::Nodes::Alias, ::Yeptris::Psych::Nodes::Mapping
+                begin
+                  h.merge!(val)
+                rescue ::TypeError
+                  h[key] = val
+                end
+              when ::Yeptris::Psych::Nodes::Sequence
+                begin
+                  merged = {}
+                  val.reverse_each { |value| merged.merge!(value) }
+                  h.merge!(merged)
+                rescue ::TypeError
+                  h[key] = val
+                end
+              else
+                h[key] = val
+              end
+            else
+              h[key] = val
+            end
+          end
+          h
+        end
+
+        # A load_tags-registered class revives from the mapping's own
+        # top-level pairs (Psych's coder semantics — no __init__
+        # wrapper, which is OUR encoder's internal convention)
+        def revive_tagged(klass, node)
+          raise ::Yeptris::DumpError,
+                "#{klass} is not Yeptris::Psych::Encodable: implement init_with(coder)" unless klass <= ::Yeptris::Psych::Encodable
+
+          obj = klass.allocate
+          anchors[node.anchor] = obj if node.anchor
+          coder = ::Yeptris::Psych::CoderShim.new
+          node.children.each_slice(2) do |k, v|
+            coder[k.to_ruby.to_s] = visit(v)
+          end
+          obj.init_with(coder)
+          obj
+        end
+
+        def revive_object(klass, node)
+          # bare !ruby/object (no class): Psych.dump(Object.new)'s form.
+          # An Object has no declared state — allocation is the whole
+          # revival (no reflection, no protocol needed).
+          return ::Object.allocate if klass.nil?
+
+          raise ::Yeptris::DumpError, "#{klass} is not Yeptris::Psych::Encodable: implement init_with(coder)" unless klass <= ::Yeptris::Psych::Encodable
+
+          obj = klass.allocate
+          anchors[node.anchor] = obj if node.anchor
+          # The class opts in via init_with(coder); the encoder wrote
+          # `coder["__init__"] = the mapping` so we can pass it back
+          # without library-side ivar reflection.
+          node.children.each_slice(2) do |k, v|
+            key = k.to_ruby.to_s
+            next unless key == "__init__"
+
+            coder = ::Yeptris::Psych::CoderShim.new
+            if v.is_a?(::Yeptris::Psych::Nodes::Mapping)
+              v.children.each_slice(2) do |ck, cv|
+                coder[ck.to_ruby.to_s] = visit(cv)
+              end
+            end
+            obj.init_with(coder)
+          end
+          obj
+        end
+
+        def resolve_class(name)
+          return nil if name.nil? || name.empty?
+
+          klass = ::Object.const_get(name)
+          raise DisallowedClass, name unless klass.is_a?(Class) || klass.is_a?(Module)
+
+          klass
+        rescue ::NameError
+          nil
+        end
+      end
+    end
+  end
+end
