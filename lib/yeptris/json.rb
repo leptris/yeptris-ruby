@@ -417,7 +417,7 @@ module Yeptris
       out_p = ::FFI::MemoryPointer.new(:pointer)
       olen_p = ::FFI::MemoryPointer.new(:size_t)
       st = ::Yeptris::FFI.yeptris_json_from_marshal(
-        m, m.bytesize, 0, out_p, olen_p
+        m, m.bytesize, 1, out_p, olen_p
       )
       return nil if st == ::Yeptris::FFI::ERROR_UNSUPPORTED
       raise ParseError, ::Yeptris::FFI.last_error_message unless st == ::Yeptris::FFI::OK
