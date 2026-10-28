@@ -303,6 +303,12 @@ module Yeptris
     attach_function :yeptris_cbor_encode_sequence,
                     %i[pointer size_t uint32 pointer], :pointer
     CBOR_EX = !(@missing ||= []).include?(:yeptris_cbor_decode)
+    # yeptris-ruby#322: Marshal.dump bytes -> one CBOR item in one C
+    # call (engine 0.6.49+); MARSHAL_CBOR goes false on older libraries
+    # and CBOR.dump keeps the YAMLTree walk
+    attach_function :yeptris_cbor_from_marshal,
+                    %i[pointer size_t uint32 pointer pointer], :int
+    MARSHAL_CBOR = !(@missing ||= []).include?(:yeptris_cbor_from_marshal)
 
     # Owned char* results (serialize*): one reader, freed exactly once.
     # The release goes through yeptris_free (libyeptris's own

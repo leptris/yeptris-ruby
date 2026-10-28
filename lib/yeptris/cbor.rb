@@ -77,6 +77,11 @@ module Yeptris
     end
 
     def dump(obj, canonical: true)
+      # yeptris-ruby#322: the marshal face answers in one C call when
+      # the host has an exact spelling; nil routes to the tree walk
+      data = marshal_cbor_dump(obj, canonical)
+      return data if data
+
       docs = build_documents([obj])
       begin
         encode_one(docs[0], canonical)
@@ -121,6 +126,33 @@ module Yeptris
       opts = canonical ? CANONICAL : 0
       len_ptr = ::FFI::MemoryPointer.new(:size_t)
       take_buffer(::Yeptris::FFI.yeptris_cbor_encode(doc.c_ptr, opts, len_ptr), len_ptr)
+    end
+
+    # yeptris-ruby#322: Marshal.dump bytes -> one CBOR item in ONE C
+    # call (yeptris_cbor_from_marshal, engine 0.6.49+). Returns nil
+    # when the route is unavailable or the host's bytes have no exact
+    # fast-path spelling (UNSUPPORTED), and the caller keeps the
+    # YAMLTree walk, which is exact by construction. Marshal-undumpable
+    # hosts raise TypeError; nil lets that walk own the DumpError
+    # contract too.
+    def marshal_cbor_dump(obj, canonical)
+      return nil unless defined?(::Yeptris::FFI::MARSHAL_CBOR) &&
+                        ::Yeptris::FFI::MARSHAL_CBOR
+      m = Marshal.dump(obj)
+      out_p = ::FFI::MemoryPointer.new(:pointer)
+      olen_p = ::FFI::MemoryPointer.new(:size_t)
+      st = ::Yeptris::FFI.yeptris_cbor_from_marshal(
+        m, m.bytesize, canonical ? CANONICAL : 0, out_p, olen_p
+      )
+      return nil unless st == ::Yeptris::FFI::OK
+      buf = out_p.read_pointer
+      return nil if buf.null?
+
+      data = buf.read_bytes(::Yeptris::FFI.read_c_size_t(olen_p))
+      ::Yeptris::FFI.yeptris_marshal_free(buf)
+      data.force_encoding(Encoding::BINARY)
+    rescue ::TypeError
+      nil
     end
 
     # The encode convenience contract: a malloc'd buffer plus its
