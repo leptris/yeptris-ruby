@@ -220,6 +220,33 @@ RSpec.describe "Yeptris::JSON parity with JSON.parse" do
     end
   end
 
+  # The boundary opt-out (yeptris-ruby#335): third-party feeds (Crossref
+  # book records keyed by ISBN, NIST's pubs export keyed by "&nbsp") carry
+  # duplicates that reject under json >= 3's default contract; boundary
+  # parsers state last-wins explicitly instead of reaching for the stdlib.
+  describe "allow_duplicate_key:" do
+    it "answers last-wins under json >= 3 when opted in" do
+      skip "resolved json gem is 2.x (last-wins either way)" if ::JSON::VERSION.to_f < 3
+
+      expect(Yeptris::JSON.load('{"a":1,"a":2}', allow_duplicate_key: true))
+        .to eq({ "a" => 2 })
+    end
+
+    it "stays strict by default under json >= 3" do
+      skip "resolved json gem is 2.x (lenient either way)" if ::JSON::VERSION.to_f < 3
+
+      expect { Yeptris::JSON.load('{"a":1,"a":2}') }
+        .to raise_error(Yeptris::JSON::ParseError, /duplicate key/)
+    end
+
+    it "is a no-op under json 2.x (already last-wins)" do
+      skip "resolved json gem is >= 3 (raises)" if ::JSON::VERSION.to_f >= 3
+
+      expect(Yeptris::JSON.load('{"a":1,"a":2}', allow_duplicate_key: true))
+        .to eq({ "a" => 2 })
+    end
+  end
+
   describe "the YAML surface keeps the Psych contract (default-safety)" do
     it "JSON-shaped YAML with a trailing comma parses like Psych" do
       expect(Yeptris::YAML.load('{"a": [1,]}')).to eq({ "a" => [1] })
