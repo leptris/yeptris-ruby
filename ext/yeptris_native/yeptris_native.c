@@ -483,7 +483,17 @@ RUBY_FUNC_EXPORTED void Init_native(void) {
     rb_define_singleton_method(mNat, "shape_mode", native_shape_mode, 0);
     rb_define_singleton_method(mNat, "shape_mode=", native_shape_mode_set, 1);
     rb_define_singleton_method(mNat, "scan_time", native_scan_time, 2);
-    rb_define_const(mNat, "AVAILABLE", Qtrue);
+    /* the leptris bridge vendors this same ext (leptris's
+     * lib/leptris/xml/native_3_3.so), so both gems can co-initialize
+     * in one process: the second init re-ran rb_define_const and
+     * warned "already initialized constant Yeptris::Native::AVAILABLE"
+     * — which moxml treated as an adapter load failure and fell back
+     * to nokogiri for the rest of the process (yeptris-ruby#336).
+     * Re-registration is idempotent: skip the const when the first
+     * init (either gem's copy) already defined it. */
+    if (!rb_const_defined_at(mNat, rb_intern("AVAILABLE"))) {
+        rb_define_const(mNat, "AVAILABLE", Qtrue);
+    }
     const char* env = getenv("YEPTRIS_NATIVE_GC");
     if (env != NULL && strcmp(env, "none") == 0) yep_rb_set_gc_mode(1);
     else if (env != NULL && strcmp(env, "start") == 0) yep_rb_set_gc_mode(2);
