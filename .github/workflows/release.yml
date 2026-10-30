@@ -388,6 +388,8 @@ jobs:
           - os: ubuntu-latest
           - os: ubuntu-24.04-arm
     steps:
+      - uses: actions/checkout@v4
+
       - name: Build the musl platform gem (Alpine container)
         shell: bash
         run: |
@@ -457,6 +459,7 @@ jobs:
             platform: linux/s390x
             setup: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential git cmake ninja-build
     steps:
+      - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
 
       - name: Build the ${{ matrix.name }} platform gem
