@@ -244,7 +244,7 @@ jobs:
           git clone --quiet --depth 1 --branch "v${{ needs.bump.outputs.c_semver }}" \
             https://github.com/leptris/yeptris "$RUNNER_TEMP/pgem/yeptris-c"
           cmake -B "$RUNNER_TEMP/pgem/yeptris-c/build" -S "$RUNNER_TEMP/pgem/yeptris-c" -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
             -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON -DYEPTRIS_WITH_CBOR=ON
           cmake --build "$RUNNER_TEMP/pgem/yeptris-c/build"
           LIB="$RUNNER_TEMP/pgem/yeptris-c/build/src/libyeptris.so"
@@ -303,7 +303,7 @@ jobs:
           git clone --quiet --depth 1 --branch "v${{ needs.bump.outputs.c_semver }}" \
             https://github.com/leptris/yeptris "$RUNNER_TEMP/pgem/yeptris-c"
           cmake -B "$RUNNER_TEMP/pgem/yeptris-c/build" -S "$RUNNER_TEMP/pgem/yeptris-c" \
-            -DYEPTRIS_BUILD_TESTING=OFF \
+            -DBUILD_TESTING=OFF \
             -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON -DYEPTRIS_WITH_CBOR=ON
           cmake --build "$RUNNER_TEMP/pgem/yeptris-c/build" --config Release
           LIB="$RUNNER_TEMP/pgem/yeptris-c/build/bin/Release/yeptris.dll"

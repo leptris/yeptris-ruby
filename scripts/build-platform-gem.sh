@@ -30,7 +30,7 @@ if [ "$IS_WINDOWS" = "1" ] && [ "$(ruby -e 'print Gem::Platform.local.to_s' 2>/d
   # mingw-w64 toolchain — gcc via Ninja; gcc keeps the lib prefix and
   # stages under src/ directly, so the MSVC name dances do not apply
   cmake -B "$WORK/yeptris-c/build" -S "$WORK/yeptris-c" -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
+    -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
     -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
   cmake --build "$WORK/yeptris-c/build"
   LIB="$WORK/yeptris-c/build/src/libyeptris.dll"
@@ -43,7 +43,7 @@ elif [ "$IS_WINDOWS" = "1" ]; then
   # prefix and stages in Release/; the gem vendors it AS
   # libyeptris.dll — the ffi ladder's name.
   cmake -B "$WORK/yeptris-c/build" -S "$WORK/yeptris-c" \
-    -DYEPTRIS_BUILD_TESTING=OFF \
+    -DBUILD_TESTING=OFF \
     -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
   cmake --build "$WORK/yeptris-c/build" --config Release
   LIB="$WORK/yeptris-c/build/bin/Release/yeptris.dll"
@@ -70,12 +70,12 @@ else
     # the mapping table.
     export MACOSX_DEPLOYMENT_TARGET=26.0
     cmake -B "$WORK/yeptris-c/build" -S "$WORK/yeptris-c" -G Ninja \
-      -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
+      -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
       -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON \
       -DCMAKE_OSX_DEPLOYMENT_TARGET=26.0
   else
     cmake -B "$WORK/yeptris-c/build" -S "$WORK/yeptris-c" -G Ninja \
-      -DCMAKE_BUILD_TYPE=Release -DYEPTRIS_BUILD_TESTING=OFF \
+      -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
       -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
   fi
   cmake --build "$WORK/yeptris-c/build"
