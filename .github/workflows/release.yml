@@ -392,11 +392,14 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/pgem"
-          docker run --rm -v "$RUNNER_TEMP/pgem:/pgem" -e V="${{ needs.bump.outputs.c_semver }}" \
+          # /bnd is THIS run's checkout, mounted in — an in-container
+          # `git clone --branch v$VERSION` has raced the freshly pushed
+          # tag before (the 0.6.51.0 train's musl legs built with the
+          # pre-BUILD_TESTING script off a stale ref)
+          docker run --rm -v "$RUNNER_TEMP/pgem:/pgem" -v "$GITHUB_WORKSPACE:/bnd" -e V="${{ needs.bump.outputs.c_semver }}" \
             ruby:3.4-alpine sh -c '
             set -eux
             apk add --no-cache build-base bash git cmake ninja
-            git clone --quiet --depth 1 --branch "v${{ needs.bump.outputs.version }}" https://github.com/leptris/yeptris-ruby /bnd
             bash /bnd/scripts/build-platform-gem.sh "$V" https://github.com/leptris/yeptris-ruby /pgem
           '
 
@@ -460,12 +463,13 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/pgem-${{ matrix.name }}"
+          # /bnd is THIS run's checkout, mounted in — same stale-tag race
+          # as the musl leg
           docker run --rm --platform "${{ matrix.platform }}" \
-            -v "$RUNNER_TEMP:/work" -w /work \
+            -v "$RUNNER_TEMP:/work" -v "$GITHUB_WORKSPACE:/bnd" -w /work \
             "${{ matrix.image }}" sh -c '
             set -eux
             ${{ matrix.setup }}
-            git clone --quiet --depth 1 --branch "v${{ needs.bump.outputs.version }}" https://github.com/leptris/yeptris-ruby /bnd
             bash /bnd/scripts/build-platform-gem.sh "${{ needs.bump.outputs.c_semver }}" https://github.com/leptris/yeptris-ruby "/work/pgem-${{ matrix.name }}"
           '
 
