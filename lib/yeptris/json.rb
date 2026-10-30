@@ -34,12 +34,21 @@ module Yeptris
 
     module_function
 
-    def load(source)
+    # allow_duplicate_key: opts out of the resolved json gem's strict
+    # duplicate-key contract (json >= 3 rejects by default) — last value
+    # wins, exactly the historical JSON.parse contract. System-boundary
+    # parsers need it: third-party feeds (Crossref book records keyed by
+    # ISBN, NIST's pubs export keyed by "&nbsp", the UN search API's blank
+    # keys) genuinely carry duplicates, and rejecting them breaks the fetch
+    # rather than flagging the data (relaton/relaton#413, the ask in
+    # yeptris-ruby#335). Default stays the json-gem-parity strictness.
+    def load(source, allow_duplicate_key: false)
+      strict = STRICT_DUPLICATE_KEYS && !allow_duplicate_key
       source = ::Yeptris.read_input(source)
       source = source.to_s
       if defined?(::Yeptris::Native)
         begin
-          return ::Yeptris::Native.load_json(source, STRICT_DUPLICATE_KEYS)
+          return ::Yeptris::Native.load_json(source, strict)
         rescue ::Yeptris::ParseError => e
           raise ParseError, e.message
         end
@@ -53,9 +62,9 @@ module Yeptris
       # none) answered last-wins under json >= 3 — found by canon's
       # dependent CI, whose parity pin now names the lane.
       return marshal_engine(
-        source, STRICT_DUPLICATE_KEYS ? ::Yeptris::FFI::MARSHAL_STRICT_DUP_KEYS : 0
+        source, strict ? ::Yeptris::FFI::MARSHAL_STRICT_DUP_KEYS : 0
       ) if ::Yeptris::FFI::MARSHAL_STRICT_DUP
-      tape_engine(source)
+      tape_engine(source, strict)
     end
 
     # The marshal engine (#278): yeptris_parse_json gates the strict
@@ -156,19 +165,19 @@ module Yeptris
       out.force_encoding(Encoding::UTF_8)
     end
 
-    def tape_engine(source)
+    def tape_engine(source, strict_dup = STRICT_DUPLICATE_KEYS)
       tape = ::Yeptris::FFI::JsonTape.new
       rc = ::Yeptris::FFI.yeptris_parse_json_tape(source, source.bytesize, tape)
       raise ParseError, ::Yeptris::FFI.last_error_message if rc != ::Yeptris::FFI::OK
 
       begin
-        walk_tape(source, tape)
+        walk_tape(source, tape, strict_dup)
       ensure
         ::Yeptris::FFI.yeptris_tape_free(tape)
       end
     end
 
-    def walk_tape(src, tape, strict_dup = STRICT_DUPLICATE_KEYS)
+    def walk_tape(src, tape, strict_dup)
       n = tape[:count]
       kinds = tape[:kinds].read_bytes(n).unpack("C*")
       offs = tape[:offs].read_bytes(n * 4).unpack("V*")
