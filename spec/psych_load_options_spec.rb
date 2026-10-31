@@ -60,3 +60,34 @@ RSpec.describe "event-level scalar encodings" do
     expect(v.encoding).to eq(Encoding::UTF_8)
   end
 end
+
+RSpec.describe "Document.parse input retention" do
+  # the C document BORROWS its input (zero-copy string views); the
+  # wrapper must retain it or a GC frees memory every later node read
+  # still points into (audit 2026-10-31). A heap-built string with no
+  # other references, parse, GC, then read — the standard pin for the
+  # GC-timing class (#182/#259 precedents).
+  it "keeps node values readable across GC cycles" do
+    key = "k" * 40
+    val = "v" * 40
+    doc = Yeptris::Document.parse(key + ": " + val + "\n")
+    3.times { GC.start }
+    root = doc.root(0)
+    expect(root.keys.first.value).to eq(key)
+    got = root[key]
+    expect(got.value).to eq(val)
+    3.times { GC.start }
+    expect(got.value).to eq(val)
+    doc&.free
+  end
+
+  it "parse_json retains its input the same way" do
+    doc = Yeptris::Document.parse_json('{"' + ("j" * 40) + '": "' + ("w" * 40) + '"}')
+    3.times { GC.start }
+    root = doc.root(0)
+    expect(root.keys.first.value).to eq("j" * 40)
+    got = root["j" * 40]
+    expect(got.value).to eq("w" * 40)
+    doc&.free
+  end
+end
