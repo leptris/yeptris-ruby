@@ -20,6 +20,25 @@ module Yeptris
   # int64 the C resolver leaves the scalar a string; Psych
   # materializes Integer (issue #31) — every walk rebuilds it.
   PSYCH_INT_SHAPE = /\A[-+]?(?:0|[1-9](?:[0-9]|,[0-9]|_[0-9])*)\z/.freeze
+
+  # The typed-string conversion law, ONE place: a big-int-shaped
+  # string rebuilds to Integer, an implicit-plain ':name' scans to a
+  # Symbol (Psych's ScalarScanner; quoted ':x' stays a String).
+  # Every str-column conversion rides this — the pair fast path
+  # drifted once and handed bignums/symbol-keys through as Strings
+  # (audit 2026-10-31).
+  def self.str_to_value(text, typed)
+    return text unless typed
+
+    if text.length > 18 && PSYCH_INT_SHAPE.match?(text)
+      text.delete(",_").to_i
+    elsif text.length > 1 && text.start_with?(":") && !text.start_with?("::")
+      text[1..].to_sym
+    else
+      text
+    end
+  end
+
     V_TS = 6
     SEQ_OPEN = 7
     MAP_OPEN = 8
@@ -155,15 +174,7 @@ module Yeptris
           text = arena.byteslice(flat[i + OFF], flat[i + LEN])
           # implicit-plain ':name' scans to a Symbol (Psych's
           # ScalarScanner); quoted ':x' stays a String
-          v = if flat[i + B] == 1 && text.length > 18 &&
-                PSYCH_INT_SHAPE.match?(text)
-                text.delete(",_").to_i
-              elsif flat[i + B] == 1 && text.length > 1 &&
-                text.start_with?(":") && !text.start_with?("::")
-                text[1..].to_sym
-              else
-                text
-              end
+          v = str_to_value(text, flat[i + B] == 1)
           if pending_anchor
             anchors[pending_anchor] = v
             pending_anchor = nil
@@ -284,20 +295,9 @@ module Yeptris
            pending_anchor.nil? && !stack.empty? && stack.last.is_a?(Hash)
           kt = arena.byteslice(offs[i], lens[i])
           if kt != "<<"
-            key = if bools[i] == 1 && kt.length > 1 && kt.start_with?(":") &&
-                     !kt.start_with?("::")
-              kt[1..].to_sym
-            else
-              kt
-            end
+            key = str_to_value(kt, bools[i] == 1)
             vt = arena.byteslice(offs[i + 1], lens[i + 1])
-            stack.last[key] =
-              if bools[i + 1] == 1 && vt.length > 1 && vt.start_with?(":") &&
-                 !vt.start_with?("::")
-                vt[1..].to_sym
-              else
-                vt
-              end
+            stack.last[key] = str_to_value(vt, bools[i + 1] == 1)
             i += 2
             next
           end
@@ -305,15 +305,7 @@ module Yeptris
         case kinds[i]
         when V_STR
           text = arena.byteslice(offs[i], lens[i])
-          v = if bools[i] == 1 && text.length > 18 &&
-                PSYCH_INT_SHAPE.match?(text)
-                text.delete(",_").to_i
-              elsif bools[i] == 1 && text.length > 1 &&
-                text.start_with?(":") && !text.start_with?("::")
-                text[1..].to_sym
-              else
-                text
-              end
+          v = str_to_value(text, bools[i] == 1)
           if pending_anchor
             anchors[pending_anchor] = v
             pending_anchor = nil
