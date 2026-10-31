@@ -143,8 +143,21 @@ module Yeptris
       # Psych 5: load is safe — plain data structures only. Tagged
       # nodes raise DisallowedClass unless their class is permitted
       # (Date/Time/Symbol are built in; they are plain data here).
-      def load(yaml, permitted_classes: [::Date, ::Time], aliases: false, **)
-        safe_load(yaml, permitted_classes: permitted_classes, aliases: aliases)
+      def load(yaml, permitted_classes: [::Date, ::Time], aliases: false,
+               symbolize_names: false, fallback: nil, filename: nil, **)
+        res = safe_load(yaml, permitted_classes: permitted_classes, aliases: aliases,
+                        symbolize_names: symbolize_names)
+        if res.nil? && !fallback.nil?
+          # stdlib's fallback: answers when the stream is empty or has
+          # NO documents — a document whose content IS nil still loads
+          # as nil. The safe path cannot tell those two apart, so the
+          # corner re-checks the count (only when a fallback rides).
+          doc = ::Yeptris::Document.parse(yaml, schema: :compat_11)
+          empty = doc.nil? || doc.document_count.zero?
+          doc&.free
+          return fallback if empty
+        end
+        res
       end
 
       # Full revival over the Nodes tree: !ruby/object, !ruby/struct,

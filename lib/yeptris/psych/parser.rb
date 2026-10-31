@@ -25,6 +25,10 @@ module Yeptris
         yaml = yaml.to_s
         @filename = filename
         flat, arena = Materializer.drain(yaml, schema: :compat_11)
+        # the engine's arena is UTF-8 bytes; without the tag every
+        # scalar reached handlers as ASCII-8BIT (stdlib Psych hands
+        # UTF-8; TreeBuilder then propagated binary into node values)
+        arena.force_encoding(Encoding::UTF_8)
         dispatch(flat, arena)
         self
       rescue ParseError => e
