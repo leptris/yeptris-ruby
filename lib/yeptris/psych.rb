@@ -290,21 +290,76 @@ module Yeptris
         ::Yeptris::Psych.dump(obj, io, options)
       end
 
-      def load_stream(yaml, **kwargs, &block)
-        # materialize each document's root directly — the stream
-        # children share one C document, so their handles would all
-        # resolve to the first document's tree. stdlib's block form
-        # yields each loaded document's object (#179 round 4).
-        doc = Yeptris::Document.parse(yaml, schema: :compat_11)
-        return nil if doc.nil? # the legal empty stream
-
-        begin
-          docs = (0...doc.document_count).map { |i| doc.root(i).to_ruby }
-        ensure
-          doc.free
+      # stdlib's load_stream (yeptris#881): every document of the
+      # stream, in order — the block form yields each loaded document.
+      # The engine's stream parse drives the boundaries (--- / ... /
+      # implicit documents after a ...); empty documents are nil
+      # elements, exactly what stdlib yields.
+      #
+      # errors: :raise (default) re-raises a bad document as stdlib's
+      # family — Psych::SyntaxError (parse() translates the same way).
+      # errors: :collect never raises for a bad document: the stream
+      # re-walks at marker boundaries (Yeptris::YAML._stream_slices)
+      # through this face's own DOM materialization, and the bad
+      # document's position carries the SyntaxError marker.
+      def load_stream(yaml, errors: :raise, **kwargs, &block)
+        unless %i[raise collect].include?(errors)
+          raise ArgumentError, "errors: must be :raise or :collect (got #{errors.inspect})"
         end
+
+        # once, up front: the collect fallback re-parses this text and
+        # an IO input would already be at EOF by then
+        yaml = ::Yeptris.read_input(yaml).to_s
+        docs =
+          begin
+            # materialize each document's root directly — the stream
+            # children share one C document, so their handles would all
+            # resolve to the first document's tree. stdlib's block form
+            # yields each loaded document's object (#179 round 4).
+            doc = ::Yeptris::Document.parse(yaml, schema: :compat_11)
+            if doc.nil?
+              # the legal empty stream: stdlib answers a stream object
+              # with no children; the array face answers []
+              []
+            else
+              begin
+                (0...doc.document_count).map { |i| doc.root(i).to_ruby }
+              ensure
+                doc.free
+              end
+            end
+          rescue ::Yeptris::ParseError => e
+            # stdlib's family for a bad document (parse() translates
+            # the same way); in collect mode the bad document's
+            # position carries the SyntaxError marker instead
+            raise SyntaxError.from_parse_error(e) if errors != :collect
+
+            _collect_stream(yaml)
+          end
         docs.each { |d| block.call(d) } if block
         docs
+      end
+
+      # The errors: :collect fallback: parse the marker-boundary
+      # slices through this face's own DOM materialization; a failed
+      # slice's position carries the SyntaxError marker.
+      def _collect_stream(yaml)
+        results = []
+        ::Yeptris::YAML._stream_slices(yaml).each do |slice|
+          begin
+            doc = ::Yeptris::Document.parse(slice, schema: :compat_11)
+            next if doc.nil?
+
+            begin
+              (0...doc.document_count).each { |i| results << doc.root(i).to_ruby }
+            ensure
+              doc.free
+            end
+          rescue ::Yeptris::ParseError => e
+            results << SyntaxError.from_parse_error(e)
+          end
+        end
+        results
       end
 
       # safe_load_stream: stdlib's surface — the stream form of
