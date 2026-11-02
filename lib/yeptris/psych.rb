@@ -208,11 +208,14 @@ module Yeptris
 
       def safe_load(yaml, permitted_classes: [::Date, ::Time], aliases: false,
                     symbolize_names: false, **)
+        # ONE read at the boundary (read_input): IO-like input must be
+        # consumed once — the string rides parse AND the slice below
+        source = ::Yeptris.read_input(yaml)
         begin
-          doc = Yeptris::Document.parse(yaml, schema: :compat_11)
+          doc = Yeptris::Document.parse(source, schema: :compat_11)
           return nil if doc.nil? # the legal empty stream
 
-          res = force_utf8_scalars(walk_safe(doc.root(0), permitted_classes, aliases))
+          res = force_utf8_scalars(walk_safe(doc.root(0), permitted_classes, aliases, source))
           res = deep_symbolize_keys(res) if symbolize_names
           res
         rescue ::Yeptris::ParseError => e
@@ -461,7 +464,25 @@ module Yeptris
       # class outside the permitted set raises too (issue #69: a
       # compat_11 date must not become a Date unless Date is
       # permitted — Psych::DisallowedClass semantics).
-      def walk_safe(root, permitted, aliases_enabled)
+      #
+      # The single-pass slice (#862): the gate walk IS the cost —
+      # per-node FFI reads. Three provable facts retire it for clean
+      # documents: the parser cannot build an alias without a `*`
+      # byte in the source, cannot build an explicit tag without a
+      # `!` byte, and the marshal builder REFUSES timestamps and
+      # merge keys (its success proves none exist — every
+      # timestamp-typed shape is refused, verified per shape). So
+      # `marshal_fast` doubles as the probe AND the build in one C
+      # call: on a gate-free source its success proves check() could
+      # not have raised, and the walk disappears; a refusal or a gate
+      # byte falls back to the checked walk, which is byte-for-byte
+      # the old path.
+      def walk_safe(root, permitted, aliases_enabled, source = nil)
+        if root && !source.nil? &&
+           !source.include?("*") && !source.include?("!")
+          fast = root.marshal_fast
+          return fast unless fast.nil?
+        end
         check(root, permitted, aliases_enabled) if root
         root.to_ruby
       end
