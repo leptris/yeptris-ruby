@@ -238,6 +238,21 @@ class Yeptris::Document
     r.nil? ? nil : r.to_ruby
   end
 
+  # The schema-family validation walk (validate.h, #882) over this
+  # document — or over every document of the stream it holds (the
+  # engine's report is flat across the stream; paths are root-relative
+  # per document). schema: :core_12 or :json_12 (the validation
+  # families; :compat_11 is a resolve schema, not a validation
+  # family). Returns plain Yeptris::Validation::Diagnostic values
+  # (empty = valid).
+  def validate(schema: :core_12)
+    ensure_alive!
+    report = ::FFI::MemoryPointer.new(:pointer)
+    v = ::Yeptris::Validation
+    st = Yeptris::FFI.yeptris_validate_document(@c_ptr, v.schema_id(schema), report)
+    v.consume_report(st, report, "validate document")
+  end
+
   # ---- construction conveniences (TODO.impl/11 phase 3) ----
 
   def new_mapping
