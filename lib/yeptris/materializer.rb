@@ -320,6 +320,10 @@ module Yeptris
           target = merge_target.pop
           merge_into(target, done) if target
         when DOCUMENT_START
+          # anchors are per-document (the engine memo law; PyYAML's
+          # composer resets per document): a later document's alias
+          # must not resolve into an earlier one's name
+          anchors.clear
           docs.push(nil)
         end
         i += FIELDS

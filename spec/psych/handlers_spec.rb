@@ -65,9 +65,18 @@ RSpec.describe "Yeptris::Psych event API" do
       expect(parser.filename).to eq("a.yml")
     end
 
-    it "raises SyntaxError on bad input" do
-      expect { yep_events("--- *undefined\n") }
+    it "raises SyntaxError on malformed input" do
+      expect { yep_events("a: [1, 2\n") }
         .to raise_error(::Psych::SyntaxError)
+    end
+
+    # the scanner/composer split (#847, libyaml parity): the parser
+    # streams the ALIAS event for any name — only the composer (the
+    # document parse) rejects an unresolvable one
+    it "streams a dangling alias; the composer rejects it" do
+      expect(yep_events("--- *undefined\n")).to include([:alias, ["undefined"]])
+      expect { Yeptris::Document.parse("--- *undefined\n") }
+        .to raise_error(Yeptris::ParseError, /undefined anchor/)
     end
 
     it "reads from an IO" do
@@ -146,12 +155,15 @@ RSpec.describe "Yeptris::Psych event API" do
       expect(ours.events[1]).to eq([:start_document, [[], [], false]])
     end
 
-    # libyaml keeps anchors alive across documents (its own
-    # lenience; the spec says per-document — our engine agrees with
-    # the spec, so cross-document aliases error here)
-    it "rejects cross-document aliases (spec-strict; libyaml accepts)" do
-      expect { yep_events("--- &a x\n--- *a\n") }
-        .to raise_error(::Psych::SyntaxError)
+    # the spec says anchors are per-document (libyaml's own lenience
+    # keeps them alive across documents). The scanner/composer split:
+    # the parser streams the alias like libyaml's scanner, and the
+    # composer — the document parse — rejects the cross-document
+    # reference (the engine's memo is per-document)
+    it "carries cross-document aliases in the stream; the composer rejects" do
+      expect(yep_events("--- &a x\n--- *a\n")).to include([:alias, ["a"]])
+      expect { Yeptris::Document.parse("--- &a x\n--- *a\n") }
+        .to raise_error(Yeptris::ParseError, /undefined anchor/)
     end
   end
 end
