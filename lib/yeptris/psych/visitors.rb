@@ -437,6 +437,10 @@ module Yeptris
           when /\A!ruby\/object(?::(.+))?\z/
             klass = resolve_class(Regexp.last_match(1).to_s)
             revive_object(klass, node)
+          when /\A!ruby\/hash:(.+)\z/
+            revive_hash_class(resolve_class(Regexp.last_match(1)), node)
+          when /\A!ruby\/exception(?::(.*))?\z/
+            revive_exception(resolve_class(Regexp.last_match(1).to_s), node)
           else
             # Psych.load_tags first (the class registry, #95 bug 4);
             # anything else stays the plain mapping
@@ -452,9 +456,13 @@ module Yeptris
         # key's SHAPE decides (an explicit !!str '<<' is a literal key,
         # not a merge), the VALUE's node kind picks the arm, and every
         # merge is TypeError-guarded (a bad element keeps the whole
-        # '<<' pair literal — merges are all-or-nothing).
-        def hash_into(h, node)
-          anchors[node.anchor] = h if node.anchor
+        # '<<' pair literal — merges are all-or-nothing). The anchor
+        # registrant is the receiver by default; the object revivals
+        # pass the revived OBJ (psych's revive(): the object itself is
+        # registered before the children walk, so an alias inside an
+        # ivar pointing back at the object resolves to it).
+        def hash_into(h, node, anchor: nil)
+          anchors[node.anchor] = (anchor || h) if node.anchor
           node.children.each_slice(2) do |k, v|
             key = visit(k)
             val = visit(v)
@@ -502,29 +510,124 @@ module Yeptris
         end
 
         def revive_object(klass, node)
-          # bare !ruby/object (no class): Psych.dump(Object.new)'s form.
-          # An Object has no declared state — allocation is the whole
-          # revival (no reflection, no protocol needed).
-          return ::Object.allocate if klass.nil?
-
-          raise ::Yeptris::DumpError, "#{klass} is not Yeptris::Psych::Encodable: implement init_with(coder)" unless klass <= ::Yeptris::Psych::Encodable
-
-          obj = klass.allocate
+          obj = klass ? klass.allocate : ::Object.allocate
+          # psych's revive(): the object registers BEFORE the children
+          # walk — an alias inside the state pointing back at the
+          # object resolves to it (identity through ivars)
           anchors[node.anchor] = obj if node.anchor
-          # The class opts in via init_with(coder); the encoder wrote
-          # `coder["__init__"] = the mapping` so we can pass it back
-          # without library-side ivar reflection.
-          node.children.each_slice(2) do |k, v|
-            key = k.to_ruby.to_s
-            next unless key == "__init__"
 
-            coder = ::Yeptris::Psych::CoderShim.new
-            if v.is_a?(::Yeptris::Psych::Nodes::Mapping)
-              v.children.each_slice(2) do |ck, cv|
-                coder[ck.to_ruby.to_s] = visit(cv)
-              end
+          if klass
+            # The yeptris encoder's format (visit_encode_with): the
+            # Encodable protocol rides the __init__ marker, so the
+            # state passes back through init_with(coder) without
+            # library-side ivar reflection. The format decides on the
+            # RAW key before any value is visited (the old walk's
+            # shape; sibling values stay untouched when it fires).
+            init = nil
+            node.children.each_slice(2) do |k, v|
+              init = v if k.to_ruby.to_s == "__init__"
             end
+            if init
+              unless klass <= ::Yeptris::Psych::Encodable
+                raise ::Yeptris::DumpError,
+                      "#{klass} is not Yeptris::Psych::Encodable: implement init_with(coder)"
+              end
+
+              coder = ::Yeptris::Psych::CoderShim.new
+              if init.is_a?(::Yeptris::Psych::Nodes::Mapping)
+                init.children.each_slice(2) do |ck, cv|
+                  coder[ck.to_ruby.to_s] = visit(cv)
+                end
+              end
+              obj.init_with(coder)
+              return obj
+            end
+          end
+
+          # stdlib psych's format (visit_Object + dump_ivars): the
+          # mapping's own top-level pairs ARE the object state —
+          # revives through init_with when the class defines it, ivar
+          # assignment otherwise. THE AUDIT FIX: the __init__-only
+          # walk silently dropped the ivars of every stdlib
+          # Psych.dump-produced document.
+          init_with_state(obj, hash_into({}, node, anchor: obj), node)
+          obj
+        end
+
+        # !ruby/hash:K (stdlib visit_Hash of a Hash subclass): the
+        # SUBCLASS allocates and the mapping's own pairs fill it
+        # (merge keys included, hash_into semantics). A name that
+        # resolves to a non-Hash raises stdlib resolve_subclass's
+        # ArgumentError; an unresolvable name stays a plain Hash (the
+        # resolve_class-returns-nil convention this binding already
+        # applies to !ruby/object and !ruby/struct — safe_load raises
+        # DisallowedClass for it first).
+        def revive_hash_class(klass, node)
+          if klass
+            unless klass <= ::Hash
+              raise ::ArgumentError, "Invalid tag: expected a subclass of Hash, got #{klass}"
+            end
+
+            h = klass.allocate
+          else
+            h = {}
+          end
+          anchors[node.anchor] = h if node.anchor
+          hash_into(h, node)
+          h
+        end
+
+        # !ruby/exception[:K] (stdlib visit_Exception + build_exception):
+        # the message rides the exception's own construction surface
+        # (Class#exception — psych's C build_exception writes the
+        # engine-internal mesg slot on an allocated instance, which
+        # Ruby-level ivar assignment cannot reach: message would stay
+        # the class name), backtrace is consumed if present, and every
+        # other pair lands as ivars (message/backtrace excepted — they
+        # name the exception's own surface, not object state). Bare
+        # !ruby/exception rides ::Exception (psych's class_loader
+        # exception fallback). A subclass whose initialize refuses a
+        # message argument constructs bare — same fallback psych's
+        # Ruby-side build_exception carried before the C move.
+        def revive_exception(klass, node)
+          h = {}
+          node.children.each_slice(2) do |k, v|
+            h[visit(k)] = visit(v)
+          end
+          mesg = h.delete("message")
+          e = build_exception(klass || ::Exception, mesg)
+          anchors[node.anchor] = e if node.anchor
+          e.set_backtrace(h.delete("backtrace")) if h.key?("backtrace")
+          init_with_state(e, h, node)
+          e
+        end
+
+        def build_exception(klass, mesg)
+          return klass.exception if mesg.nil?
+
+          begin
+            klass.exception(mesg)
+          rescue ::ArgumentError, ::TypeError
+            klass.exception
+          end
+        end
+
+        # psych's init_with: a class defining init_with takes the coder
+        # (the raw pair map, coder.tag = the mapping's tag); everything
+        # else — bare Object included — takes the pairs as ivars. Keys
+        # are @-normalized both ways: stdlib DUMPS the ivars @-stripped
+        # (yaml_tree's dump_ivars), older psych and hand-written docs
+        # spell them WITH the @ — both map to the same ivar.
+        def init_with_state(obj, h, node)
+          if obj.respond_to?(:init_with)
+            coder = ::Yeptris::Psych::CoderShim.new
+            coder.tag = node.tag
+            h.each { |k, v| coder[k] = v }
             obj.init_with(coder)
+          else
+            h.each do |k, v|
+              obj.instance_variable_set(:"@#{k.to_s.sub(/\A@/, "")}", v)
+            end
           end
           obj
         end
