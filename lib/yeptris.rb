@@ -54,6 +54,7 @@ module Yeptris
   autoload :ValueML, "yeptris/valueml"
   autoload :Psych, "yeptris/psych"
   autoload :Schema, "yeptris/schema"
+  autoload :Validation, "yeptris/validation"
   autoload :CBOR, "yeptris/cbor"
 end
 

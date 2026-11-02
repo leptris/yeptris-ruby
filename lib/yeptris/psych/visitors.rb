@@ -13,12 +13,17 @@ module Yeptris
       # !ruby/... tags Psych's own emitter produces.
       class YAMLTree
         # stdlib's factory (relaton's db cache calls it): the options
-        # ride our visitor defaults
+        # reach the engine's emitter — :line_width and :canonical ride
+        # yeptris_emit_options (13B), :indentation is accepted for
+        # Psych parity (the engine's YAML emitter carries no
+        # indentation knob; emit.h's struct is size/canonical/
+        # best_width/explicit_doc_start).
         def self.create(options = {}, emitter = nil)
-          new
+          new(options: options)
         end
 
-        def initialize(schema: nil)
+        def initialize(schema: nil, options: {})
+          @options = options || {}
           @tree = ::Yeptris::Document.create(schema: schema)
           @names = {}  # object_id -> anchor name
           @counter = 0
@@ -48,7 +53,9 @@ module Yeptris
         end
 
         def finish
-          @tree.serialize(explicit_doc_start: true)
+          @tree.serialize(canonical: @options[:canonical] ? true : false,
+                          best_width: @options[:line_width] || 0,
+                          explicit_doc_start: true)
         end
 
         # The built-document handle stdlib's dump tail serializes
@@ -57,8 +64,11 @@ module Yeptris
             @doc = doc
           end
 
-          def yaml(io = nil, _options = {})
-            out = @doc.serialize(explicit_doc_start: true)
+          def yaml(io = nil, options = {})
+            options ||= {}
+            out = @doc.serialize(canonical: options[:canonical] ? true : false,
+                                 best_width: options[:line_width] || 0,
+                                 explicit_doc_start: true)
             return out unless io
 
             io.write(out)

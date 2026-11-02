@@ -424,11 +424,16 @@ module Yeptris
 
       # Arbitrary object graphs through the YAMLTree visitor
       # (anchors, !ruby/ tags); plain data rides the fast builder.
+      # options reach the engine's emitter: :line_width folds flow
+      # collections past the width (the engine default is 80),
+      # :canonical switches the fixed form; :indentation is accepted
+      # for Psych parity (the engine's YAML emitter has no indentation
+      # knob). The audit round-2 finding — width accepted and
+      # discarded — is closed here and in YAMLTree.create.
       def dump(obj, io = nil, options = {})
         # stdlib's Object#to_yaml calls Psych.dump(self, options) —
         # the options hash lands in the io slot positionally; treat a
-        # Hash there as options (the options themselves ride the
-        # visitor's defaults, #95 thread)
+        # Hash there as options
         if io.is_a?(::Hash)
           options = io
           io = nil
@@ -443,11 +448,12 @@ module Yeptris
           # path would emit it tag-less iso8601 (re-loading as Time);
           # the visitor carries stdlib's !ruby/object:DateTime tag
           when ::DateTime
-            Visitors::YAMLTree.new.push(obj).finish
+            Visitors::YAMLTree.new(options: options).push(obj).finish
           when nil, true, false, ::String, ::Integer, ::Float, ::Symbol, ::Date, ::Time
-            Yeptris::YAML.dump(obj, header: true)
+            Yeptris::YAML.dump(obj, header: true, width: options[:line_width],
+                                     canonical: options[:canonical] ? true : false)
           else
-            Visitors::YAMLTree.new.push(obj).finish
+            Visitors::YAMLTree.new(options: options).push(obj).finish
           end
         return out unless io
 

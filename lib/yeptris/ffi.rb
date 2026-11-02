@@ -427,6 +427,9 @@ module Yeptris
 
     SCHEMA_12_CORE = 0
     SCHEMA_11_COMPAT = 1
+    # resolve.h's third kind (spec 10.2): plain scalars must match a
+    # JSON production; the validate face's schema-family walk rides it.
+    SCHEMA_12_JSON = 2
 
     OK = 0
     ERROR_PARSE = 1
@@ -437,6 +440,96 @@ module Yeptris
     ERROR_ARG = 6
     ERROR_UNSUPPORTED = 7
     ERROR_INTERNAL = 8
+
+    # ---- the validation face (validate.h; #882, engine 0.6.59+) ----
+    # Whole reports: one call produces a report the caller drains
+    # (count/at) and frees once. SCHEMA_ERROR (9, defined above) means
+    # the walk completed and the instance is INVALID — drain the
+    # report. Absent on older libraries: the attachment helper records
+    # the miss and VALIDATION gates the Ruby face with the friendly
+    # error at use.
+
+    typedef :pointer, :yeptris_schema
+    typedef :pointer, :yeptris_validate_report
+
+    # yeptris_diagnostic (validate.h): ABI-frozen — four uint32 facts
+    # then two bounded NUL-terminated texts. 16 + 256 + 128 bytes.
+    class CDiagnostic < ::FFI::Struct
+      layout :code, :uint32,
+             :line, :uint32,
+             :col, :uint32,
+             :offset, :uint32,
+             :path, [:char, 256],
+             :detail, [:char, 128]
+    end
+
+    # The schema-family walk: parse + validate fused (tag consistency,
+    # canonical-form key uniqueness; the JSON family's string-key +
+    # JSON-production rules under SCHEMA_12_JSON).
+    attach_function :yeptris_validate, %i[pointer size_t int pointer], :int
+    # An already-parsed document (or stream) against the family walk.
+    attach_function :yeptris_validate_document, %i[yeptris_document int pointer], :int
+    # JSON Schema draft 2020-12 subset, one-shot (schema bytes parsed
+    # per call).
+    attach_function :yeptris_json_schema_validate,
+                    %i[pointer size_t pointer size_t pointer], :int
+    # The compiled-schema economy (#885 item 3): parse once, validate
+    # many. NULL from compile = failure (yeptris_last_error carries why).
+    attach_function :yeptris_schema_compile, %i[pointer size_t], :yeptris_schema
+    attach_function :yeptris_schema_validate,
+                    %i[yeptris_schema pointer size_t pointer], :int
+    attach_function :yeptris_schema_free, [:yeptris_schema], :void
+    attach_function :yeptris_validate_report_count,
+                    [:yeptris_validate_report], :size_t
+    attach_function :yeptris_validate_report_at,
+                    %i[yeptris_validate_report size_t], :pointer
+    attach_function :yeptris_validate_report_free,
+                    [:yeptris_validate_report], :void
+
+    # The diag codes (validate.h's YeptrisDiagCode, appending-only;
+    # pinned values — the engine's test_abi pins the head).
+    DIAG_NONE = 0
+    DIAG_TAG_MISMATCH = 1
+    DIAG_KEY_NOT_STRING = 2
+    DIAG_NON_JSON_TYPE = 3
+    DIAG_DUPLICATE_KEY = 4
+    DIAG_TYPE = 5
+    DIAG_REQUIRED = 6
+    DIAG_ENUM = 7
+    DIAG_CONST = 8
+    DIAG_PATTERN = 9
+    DIAG_MINIMUM = 10
+    DIAG_MAXIMUM = 11
+    DIAG_EXCLUSIVE_MINIMUM = 12
+    DIAG_EXCLUSIVE_MAXIMUM = 13
+    DIAG_MIN_LENGTH = 14
+    DIAG_MAX_LENGTH = 15
+    DIAG_MIN_ITEMS = 16
+    DIAG_MAX_ITEMS = 17
+    DIAG_UNIQUE_ITEMS = 18
+    DIAG_ADDITIONAL_PROPERTY = 19
+    DIAG_ANY_OF = 20
+    DIAG_ONE_OF = 21
+    DIAG_NOT = 22
+    DIAG_REF = 23
+    DIAG_FALSE_SCHEMA = 24
+    DIAG_DEPTH = 25
+    DIAG_LIMIT = 26
+    DIAG_MULTIPLE_OF = 27
+    DIAG_MIN_PROPERTIES = 28
+    DIAG_MAX_PROPERTIES = 29
+    DIAG_CONTAINS = 30
+    DIAG_MIN_CONTAINS = 31
+    DIAG_MAX_CONTAINS = 32
+    DIAG_DEPENDENT_REQUIRED = 33
+
+    # The face's availability (engine 0.6.59+); the Validation module
+    # raises the friendly error at use when the loaded library predates
+    # the attachments (the stubs above would raise NotFoundError raw).
+    VALIDATION = !(@missing ||= []).include?(:yeptris_validate) &&
+                 !(@missing ||= []).include?(:yeptris_schema_compile) &&
+                 !(@missing ||= []).include?(:yeptris_validate_report_at)
+
     # The load-time essentials (the read path + the ownership
     # contract): absent on engines far older than the optional
     # surfaces — raise the friendly error once every constant has

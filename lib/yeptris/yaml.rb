@@ -22,16 +22,63 @@ module Yeptris
     # schema: :compat_11 selects Psych/libyaml implicit typing
     # (yes/no, 0o/octal, sexagesimal); :core_12 (default) is YAML 1.2.
     #
+    # The validation keywords (#882) check BEFORE loading and raise
+    # Yeptris::Validation::Error carrying the diagnostics on invalid
+    # input: `validate:` rides the engine's schema-family walk (true
+    # rides :core_12 — the 1.2 families are the validation families;
+    # or an explicit :core_12 / :json_12), `json_schema:` validates
+    # against JSON Schema draft 2020-12 (schema bytes or a compiled
+    # Yeptris::Validation::Schema).
+    #
     # This surface keeps the Psych contract for EVERY input — including
     # JSON-shaped ones (`{"a": [1,]}` is legal flow YAML; `"1e3"` is a
     # Psych String). Strict RFC 8259 semantics live on Yeptris::JSON
     # (TODO.restructure/31): defaults follow proof, not benchmarks.
-    def load(yaml, schema: :compat_11)
+    def load(yaml, schema: :compat_11, validate: nil, json_schema: nil)
       yaml = Yeptris.read_input(yaml)
       yaml = yaml.to_s
+      _assert_valid(yaml, validate, json_schema) if validate || json_schema
       docs = _drain_all(yaml, schema)
       docs.empty? ? nil : docs.first
     end
+
+    # The validation face (#882): every diagnostic the engine reports,
+    # as plain Yeptris::Validation::Diagnostic values (empty array =
+    # valid). Default is the engine's core-family walk; `json_schema:`
+    # switches to JSON Schema draft 2020-12 (bytes or a compiled
+    # Yeptris::Validation::Schema), `validate:` picks the schema family
+    # explicitly (:core_12 / :json_12). Every document of the stream is
+    # validated; paths are root-relative per document.
+    def validate(yaml, validate: true, json_schema: nil)
+      yaml = Yeptris.read_input(yaml)
+      _validation_call(yaml.to_s, validate, json_schema)
+    end
+
+    # The boolean posture of validate: true when the engine reports no
+    # diagnostics.
+    def valid?(yaml, validate: true, json_schema: nil)
+      validate(yaml, validate: validate, json_schema: json_schema).empty?
+    end
+
+    # The load-side gate: raises Yeptris::Validation::Error carrying
+    # the diagnostics when the input is invalid; silent otherwise.
+    def _assert_valid(yaml, validate, json_schema)
+      diags = _validation_call(yaml, validate, json_schema)
+      raise Validation::Error, diags unless diags.empty?
+    end
+
+    def _validation_call(yaml, validate, json_schema)
+      if json_schema
+        Validation.validate_schema(yaml, json_schema)
+      else
+        # `validate: true` rides :core_12 — the family walk has no
+        # :compat_11 face (the engine rejects it; resolve schemas are
+        # not validation families).
+        Validation.validate_family(yaml, schema: validate == true ? :core_12 : validate)
+      end
+    end
+    private_class_method :_validation_call
+    private_class_method :_assert_valid
 
     # Psych-semantics safe_load on the native surface (issue #69 —
     # the entry frameworks actually want): plain data only; a leaf
@@ -60,13 +107,23 @@ module Yeptris
     #
     # With a block, every element — documents and, under :collect,
     # error markers — is yielded in order; the array is returned.
-    def load_stream(yaml, schema: :compat_11, errors: :raise, &block)
+    #
+    # The validation keywords (#882) run the whole stream BEFORE
+    # loading (the same shapes as load: `validate:` family walk /
+    # `json_schema:` JSON Schema 2020-12) and raise
+    # Yeptris::Validation::Error on any diagnostics. The engine's
+    # report is flat across the stream — diagnostics carry no
+    # per-document index (streaming validation is future work, #885) —
+    # so the verdict is whole-stream by construction.
+    def load_stream(yaml, schema: :compat_11, errors: :raise, validate: nil,
+                    json_schema: nil, &block)
       unless %i[raise collect].include?(errors)
         raise ArgumentError, "errors: must be :raise or :collect (got #{errors.inspect})"
       end
 
       yaml = Yeptris.read_input(yaml)
       yaml = yaml.to_s
+      _assert_valid(yaml, validate, json_schema) if validate || json_schema
       docs =
         begin
           docs = _drain_all(yaml, schema)
@@ -176,8 +233,11 @@ module Yeptris
     # (TODO.impl/11 phase 3). Strings are emitted plain only when the
     # resolver round-trips them as strings — everything else takes a
     # quoted style, so dump(load(x)) == x for the scalar types.
-      def dump(obj, canonical: false, header: false)
-      BulkBuilder.dump(obj, canonical: canonical, header: header)
+    # width: the emitter's best_width (the engine wraps flow
+    # collections after a value when the line exceeds it; 0/nil rides
+    # the engine default of 80 — emit.h 13B).
+      def dump(obj, canonical: false, header: false, width: nil)
+      BulkBuilder.dump(obj, canonical: canonical, header: header, width: width)
     end
 
 
@@ -228,7 +288,7 @@ module Yeptris
                      Yeptris::FFI::BUILD_SEQ => SEQ_ENTRY,
                      Yeptris::FFI::BUILD_END => END_ENTRY }.freeze
 
-      def dump(obj, canonical: false, header: false)
+      def dump(obj, canonical: false, header: false, width: nil)
         parts = []
         blob = String.new(encoding: Encoding::BINARY)
         off = [0]
@@ -243,7 +303,8 @@ module Yeptris
         bblob = ::FFI::MemoryPointer.from_string(blob)
         rc = doc.build_entries(buf, parts.length, bblob, blob.bytesize)
         raise DumpError, "document_build failed: #{rc}" unless rc == FFI::OK
-        doc.serialize(canonical: canonical, explicit_doc_start: header)
+        doc.serialize(canonical: canonical, best_width: width || 0,
+                      explicit_doc_start: header)
       ensure
         doc&.free
       end
