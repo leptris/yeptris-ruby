@@ -44,11 +44,100 @@ module Yeptris
       Psych.safe_load(yaml.to_s, permitted_classes: permitted_classes, aliases: aliases)
     end
 
-    # Every document in the stream, in order.
-    def load_stream(yaml, schema: :compat_11)
+    # Every document in the stream, in order (the multi-document stream
+    # API, yeptris#881 — Psych's load_stream parity). Document boundary
+    # detection follows the engine's stream parse: explicit --- / ...
+    # markers, implicit documents after a ... terminator, and empty
+    # documents — nil elements, exactly what Psych yields for them.
+    #
+    # errors: :raise (default) raises Yeptris::ParseError on the first
+    # bad document — psych's behavior (a stream parse cannot resume
+    # past it). errors: :collect never raises for a bad document: the
+    # text re-walks at marker boundaries (see _stream_slices) and the
+    # bad document's position carries a Yeptris::ParseError marker
+    # (skip with results.grep(Yeptris::ParseError)). A stream that
+    # parses whole collects to the same plain document array as :raise.
+    #
+    # With a block, every element — documents and, under :collect,
+    # error markers — is yielded in order; the array is returned.
+    def load_stream(yaml, schema: :compat_11, errors: :raise, &block)
+      unless %i[raise collect].include?(errors)
+        raise ArgumentError, "errors: must be :raise or :collect (got #{errors.inspect})"
+      end
+
       yaml = Yeptris.read_input(yaml)
       yaml = yaml.to_s
-      _drain_all(yaml, schema)
+      docs =
+        begin
+          docs = _drain_all(yaml, schema)
+          # The value drain emits a nil record even for a stream with
+          # ZERO documents ("", a blank line, a comment) — stdlib's
+          # load_stream answers zero documents there, and the corner
+          # must not mask a real empty document ("---\n" IS [nil]).
+          # Only the [nil] shape needs the discriminating DOM count,
+          # so the good path pays nothing.
+          if docs == [nil]
+            doc = Document.parse(yaml, schema: schema)
+            docs = [] if doc.nil? || doc.document_count.zero?
+            doc&.free
+          end
+          docs
+        rescue ParseError
+          raise if errors != :collect
+
+          _collect_stream(yaml, schema)
+        end
+      docs.each { |d| block.call(d) } if block
+      docs
+    end
+
+    # A column-0 --- / ... marker line. A real document boundary in
+    # every valid YAML stream (block/scalar content can never carry one
+    # unindented), so the scan is exact — it never splits inside a
+    # document. Marker-less boundaries (implicit documents after a
+    # ...) stay INSIDE their slice, and each slice parses through the
+    # full stream face, so nothing is lost there either. Slices keep
+    # their marker lines so every slice parses standalone. Used only by
+    # the errors: :collect fallback — a stream that parses whole never
+    # splits (the fallback's lossy cases are the whole reason #881
+    # exists; the good path must stay exact).
+    STREAM_MARKER = /\A(?:---|\.\.\.)(?:[ \t]|\r?\n|\z)/
+
+    # The marker-delimited slices of a stream. A slice that began at a
+    # marker line always survives (a trailing bare `---` is an empty
+    # document — nil, like psych yields); only a comments/blank-only
+    # leading prefix (no document) drops.
+    def _stream_slices(yaml)
+      slices = []
+      current = +""
+      markered = false
+      yaml.each_line do |line|
+        if line.match?(STREAM_MARKER)
+          slices << current if markered || !current.strip.empty?
+          current = line.dup
+          markered = true
+        else
+          current << line
+        end
+      end
+      slices << current if markered || !current.strip.empty?
+      slices
+    end
+
+    # The errors: :collect fallback: parse marker-boundary slices
+    # through the full stream face; a failed slice's position carries
+    # the ParseError. Documents before the bad one still load — the
+    # per-document rescue-and-skip contract, centralized.
+    def _collect_stream(yaml, schema)
+      results = []
+      _stream_slices(yaml).each do |slice|
+        begin
+          results.concat(_drain_all(slice, schema))
+        rescue ParseError => e
+          results << e
+        end
+      end
+      results
     end
 
     # The Marshal fast path when the loaded libyeptris has it (>= 0.1.11

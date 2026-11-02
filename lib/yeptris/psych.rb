@@ -208,11 +208,14 @@ module Yeptris
 
       def safe_load(yaml, permitted_classes: [::Date, ::Time], aliases: false,
                     symbolize_names: false, **)
+        # ONE read at the boundary (read_input): IO-like input must be
+        # consumed once — the string rides parse AND the slice below
+        source = ::Yeptris.read_input(yaml)
         begin
-          doc = Yeptris::Document.parse(yaml, schema: :compat_11)
+          doc = Yeptris::Document.parse(source, schema: :compat_11)
           return nil if doc.nil? # the legal empty stream
 
-          res = force_utf8_scalars(walk_safe(doc.root(0), permitted_classes, aliases))
+          res = force_utf8_scalars(walk_safe(doc.root(0), permitted_classes, aliases, source))
           res = deep_symbolize_keys(res) if symbolize_names
           res
         rescue ::Yeptris::ParseError => e
@@ -290,21 +293,76 @@ module Yeptris
         ::Yeptris::Psych.dump(obj, io, options)
       end
 
-      def load_stream(yaml, **kwargs, &block)
-        # materialize each document's root directly — the stream
-        # children share one C document, so their handles would all
-        # resolve to the first document's tree. stdlib's block form
-        # yields each loaded document's object (#179 round 4).
-        doc = Yeptris::Document.parse(yaml, schema: :compat_11)
-        return nil if doc.nil? # the legal empty stream
-
-        begin
-          docs = (0...doc.document_count).map { |i| doc.root(i).to_ruby }
-        ensure
-          doc.free
+      # stdlib's load_stream (yeptris#881): every document of the
+      # stream, in order — the block form yields each loaded document.
+      # The engine's stream parse drives the boundaries (--- / ... /
+      # implicit documents after a ...); empty documents are nil
+      # elements, exactly what stdlib yields.
+      #
+      # errors: :raise (default) re-raises a bad document as stdlib's
+      # family — Psych::SyntaxError (parse() translates the same way).
+      # errors: :collect never raises for a bad document: the stream
+      # re-walks at marker boundaries (Yeptris::YAML._stream_slices)
+      # through this face's own DOM materialization, and the bad
+      # document's position carries the SyntaxError marker.
+      def load_stream(yaml, errors: :raise, **kwargs, &block)
+        unless %i[raise collect].include?(errors)
+          raise ArgumentError, "errors: must be :raise or :collect (got #{errors.inspect})"
         end
+
+        # once, up front: the collect fallback re-parses this text and
+        # an IO input would already be at EOF by then
+        yaml = ::Yeptris.read_input(yaml).to_s
+        docs =
+          begin
+            # materialize each document's root directly — the stream
+            # children share one C document, so their handles would all
+            # resolve to the first document's tree. stdlib's block form
+            # yields each loaded document's object (#179 round 4).
+            doc = ::Yeptris::Document.parse(yaml, schema: :compat_11)
+            if doc.nil?
+              # the legal empty stream: stdlib answers a stream object
+              # with no children; the array face answers []
+              []
+            else
+              begin
+                (0...doc.document_count).map { |i| doc.root(i).to_ruby }
+              ensure
+                doc.free
+              end
+            end
+          rescue ::Yeptris::ParseError => e
+            # stdlib's family for a bad document (parse() translates
+            # the same way); in collect mode the bad document's
+            # position carries the SyntaxError marker instead
+            raise SyntaxError.from_parse_error(e) if errors != :collect
+
+            _collect_stream(yaml)
+          end
         docs.each { |d| block.call(d) } if block
         docs
+      end
+
+      # The errors: :collect fallback: parse the marker-boundary
+      # slices through this face's own DOM materialization; a failed
+      # slice's position carries the SyntaxError marker.
+      def _collect_stream(yaml)
+        results = []
+        ::Yeptris::YAML._stream_slices(yaml).each do |slice|
+          begin
+            doc = ::Yeptris::Document.parse(slice, schema: :compat_11)
+            next if doc.nil?
+
+            begin
+              (0...doc.document_count).each { |i| results << doc.root(i).to_ruby }
+            ensure
+              doc.free
+            end
+          rescue ::Yeptris::ParseError => e
+            results << SyntaxError.from_parse_error(e)
+          end
+        end
+        results
       end
 
       # safe_load_stream: stdlib's surface — the stream form of
@@ -406,7 +464,25 @@ module Yeptris
       # class outside the permitted set raises too (issue #69: a
       # compat_11 date must not become a Date unless Date is
       # permitted — Psych::DisallowedClass semantics).
-      def walk_safe(root, permitted, aliases_enabled)
+      #
+      # The single-pass slice (#862): the gate walk IS the cost —
+      # per-node FFI reads. Three provable facts retire it for clean
+      # documents: the parser cannot build an alias without a `*`
+      # byte in the source, cannot build an explicit tag without a
+      # `!` byte, and the marshal builder REFUSES timestamps and
+      # merge keys (its success proves none exist — every
+      # timestamp-typed shape is refused, verified per shape). So
+      # `marshal_fast` doubles as the probe AND the build in one C
+      # call: on a gate-free source its success proves check() could
+      # not have raised, and the walk disappears; a refusal or a gate
+      # byte falls back to the checked walk, which is byte-for-byte
+      # the old path.
+      def walk_safe(root, permitted, aliases_enabled, source = nil)
+        if root && !source.nil? &&
+           !source.include?("*") && !source.include?("!")
+          fast = root.marshal_fast
+          return fast unless fast.nil?
+        end
         check(root, permitted, aliases_enabled) if root
         root.to_ruby
       end
