@@ -196,7 +196,11 @@ RSpec.describe "the validation face (#882)" do
     end
 
     it "pins the JSON family's non-json-type diagnostic" do
-      diags = Yeptris::YAML.validate("a: yes\n", validate: :json_12)
+      # the example-10.8 law (engine #908): implicit no-production
+      # plains are STRINGS in the 12_JSON family — `a: yes` validates
+      # clean; the diagnostic fires on EXPLICIT non-JSON tags.
+      expect(Yeptris::YAML.validate("a: yes\n", validate: :json_12)).to be_empty
+      diags = Yeptris::YAML.validate("a: !foo 1\n", validate: :json_12)
       expect(diags.map(&:keyword).uniq).to eq(["non-json-type"])
       expect(diags.first.code).to eq(Yeptris::FFI::DIAG_NON_JSON_TYPE)
     end
@@ -251,7 +255,10 @@ RSpec.describe "the validation face (#882)" do
 
   describe "load_stream with the validation keywords" do
     it "raises whole-stream on any document's diagnostics" do
-      expect(Yeptris::YAML.load_stream("--- a: 1\n--- b: 2\n", validate: true))
+      # the marker-line law (engine #915): `--- a: 1` on ONE line is
+      # rejected by libyaml/Psych/PyYAML at 1:6 — the legal multi-doc
+      # shape puts the content on the line after the marker.
+      expect(Yeptris::YAML.load_stream("---\na: 1\n---\nb: 2\n", validate: true))
         .to eq([{ "a" => 1 }, { "b" => 2 }])
 
       expect do
