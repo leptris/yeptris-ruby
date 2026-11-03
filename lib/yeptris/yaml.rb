@@ -197,6 +197,60 @@ module Yeptris
       results
     end
 
+    # The tolerant per-document walk (engine #921): every document of
+    # the stream reaches the block IN STREAM ORDER — a valid document
+    # yields (document, nil); a failed document yields (nil, error)
+    # and the walk CONTINUES at the next line-start marker, so the
+    # valid documents after a bad one are kept (load_stream with
+    # errors: :raise would drop the whole stream; :collect recovers by
+    # a regex slice split, which quoted scalars spanning marker-looking
+    # lines can defeat — the engine iterator frames scanner-accurately,
+    # so those documents fail as ONE unit instead of splitting).
+    # Errors carry the failed document's own line/column and its
+    # stream index. Without a block, an Enumerator over the pairs.
+    def each_document(yaml, schema: :compat_11, max_depth: 0, &block)
+      return enum_for(:each_document, yaml, schema: schema, max_depth: max_depth) unless block
+
+      yaml = Yeptris.read_input(yaml)
+      yaml = yaml.to_s
+      opts = FFI::ParseOptions.new
+      opts[:schema] = schema == :compat_11 ? FFI::SCHEMA_11_COMPAT : FFI::SCHEMA_12_CORE
+      opts[:max_depth] = max_depth
+      it = FFI.yeptris_stream_iter_new(yaml, yaml.bytesize, opts)
+      doc_p = ::FFI::MemoryPointer.new(:pointer)
+      idx_p = ::FFI::MemoryPointer.new(:size_t)
+      line_p = ::FFI::MemoryPointer.new(:uint32)
+      col_p = ::FFI::MemoryPointer.new(:uint32)
+      begin
+        loop do
+          st = FFI.yeptris_stream_iter_next(it, doc_p, idx_p)
+          doc_ptr = doc_p.read_pointer
+          break if st == FFI::OK && doc_ptr.null? # the stream is over
+
+          index = FFI.read_c_size_t(idx_p)
+          if st == FFI::OK
+            doc = Document.without_finalizer(doc_ptr)
+            begin
+              yield doc.to_ruby, nil
+            ensure
+              doc.free
+            end
+          else
+            FFI.yeptris_stream_iter_status(it, line_p, col_p)
+            reason = st == FFI::ERROR_DEPTH ? "depth limit exceeded" : "parse error"
+            yield nil,
+                  ParseError.new(
+                    "stream document #{index}: #{reason} at line #{line_p.read_uint32}, " \
+                    "column #{col_p.read_uint32}"
+                  )
+            break if st == FFI::ERROR_MEMORY || st == FFI::ERROR_ENCODING
+          end
+        end
+      ensure
+        FFI.yeptris_stream_iter_free(it)
+      end
+    end
+
     # The Marshal fast path when the loaded libyeptris has it (>= 0.1.11
     # era builds), falling back to the columnar drain and finally the
     # record drain — one code path, the fastest the library offers.
