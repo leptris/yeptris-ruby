@@ -56,6 +56,7 @@ module Yeptris
 
 
     typedef :pointer, :yeptris_document
+    typedef :pointer, :yeptris_stream_iter
     typedef :pointer, :yeptris_node
     typedef :pointer, :yeptris_status_out
     typedef :int, :yeptris_status
@@ -86,6 +87,20 @@ module Yeptris
     attach_function :yeptris_parse_ex,
                     %i[pointer size_t pointer yeptris_status_out], :yeptris_document
     attach_function :yeptris_parse_json, %i[pointer size_t yeptris_status_out], :yeptris_document
+
+    # The tolerant per-document stream iterator (engine #921): frames
+    # documents scanner-accurately, reports failures per document (the
+    # failed run's line/col ARE that document's own), resyncs to the
+    # next line-start marker. On an engine older than the iterator the
+    # attach stubs above raise the stale-engine message at USE
+    # (each_document's caller sees it directly — no separate gate
+    # constant, the @missing law covers it).
+    attach_function :yeptris_stream_iter_new, %i[pointer size_t pointer], :yeptris_stream_iter
+    attach_function :yeptris_stream_iter_next,
+                    %i[yeptris_stream_iter pointer pointer], :yeptris_status
+    attach_function :yeptris_stream_iter_status,
+                    %i[yeptris_stream_iter pointer pointer], :yeptris_status
+    attach_function :yeptris_stream_iter_free, [:yeptris_stream_iter], :void
 
     # The JSON tape (TODO.restructure/85; the JSON surface's load
     # engine — issue #81): ONE call, three bulk columns, spans borrow
