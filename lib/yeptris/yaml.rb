@@ -197,6 +197,13 @@ module Yeptris
       results
     end
 
+    # The engine capability behind each_document (the CBOR.available?
+    # pattern): false when the loaded libyeptris predates the stream
+    # iterator — the walk itself raises the stale-engine message at use.
+    def each_document?
+      FFI::STREAM_ITER
+    end
+
     # The tolerant per-document walk (engine #921): every document of
     # the stream reaches the block IN STREAM ORDER — a valid document
     # yields (document, nil); a failed document yields (nil, error)

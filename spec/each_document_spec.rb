@@ -3,6 +3,12 @@
 require "yeptris"
 
 RSpec.describe Yeptris::YAML do
+    # The engine capability gate: PR CI rides the newest RELEASED C
+    # tag, which may predate the iterator — skip there, run on 0.6.60+.
+  before(:all) do
+    skip "the loaded libyeptris predates the stream iterator (#921)" unless described_class.each_document?
+  end
+
   describe ".each_document" do
     it "yields every valid document with nil error, in stream order" do
       pairs = []

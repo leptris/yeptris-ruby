@@ -101,6 +101,10 @@ module Yeptris
     attach_function :yeptris_stream_iter_status,
                     %i[yeptris_stream_iter pointer pointer], :yeptris_status
     attach_function :yeptris_stream_iter_free, [:yeptris_stream_iter], :void
+    # the capability probe (evaluated AFTER the attaches above — the
+    # CBOR.available? pattern): specs and hosts gate on it; at USE a
+    # stale engine still raises the stub's message
+    STREAM_ITER = !(@missing ||= []).include?(:yeptris_stream_iter_new)
 
     # The JSON tape (TODO.restructure/85; the JSON surface's load
     # engine — issue #81): ONE call, three bulk columns, spans borrow
