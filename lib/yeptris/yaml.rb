@@ -350,6 +350,16 @@ module Yeptris
                      Yeptris::FFI::BUILD_END => END_ENTRY }.freeze
 
       def dump(obj, canonical: false, header: false, width: nil)
+        # The nil root rides the bare form (psych's dump(nil) == "\n",
+        # #290): the engine's r201 quoted-form law ("a document-root
+        # empty scalar rides the quoted form" -- the plain form does not
+        # re-parse, the roundtrip invariant) renders the built empty
+        # scalar as "" -- correct for the engine's generic serializer,
+        # wrong for the psych surface. The binding maps an empty stream
+        # back to nil on load (load\#docs.empty?\#nil), so the bare form
+        # round-trips THROUGH THE BINDING while keeping the engine's
+        # invariant untouched.
+        return header ? "--- \n" : "\n" if obj.nil? && !canonical
         parts = []
         blob = String.new(encoding: Encoding::BINARY)
         off = [0]
