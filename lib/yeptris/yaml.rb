@@ -294,9 +294,11 @@ module Yeptris
     # (TODO.impl/11 phase 3). Strings are emitted plain only when the
     # resolver round-trips them as strings — everything else takes a
     # quoted style, so dump(load(x)) == x for the scalar types.
-    # width: the emitter's best_width (the engine wraps flow
-    # collections after a value when the line exceeds it; 0/nil rides
-    # the engine default of 80 — emit.h 13B).
+    # width: the emitter's best_width. 0/nil rides the engine default
+    # (80, folding — flow collections after a value past the width, and
+    # with the #1257 flip also block plain/single-quoted scalars, the
+    # psych/libyaml stored-file behavior); a negative width is psych's
+    # line_width: -1 unwrap (the engine clamps it to never-fold).
       def dump(obj, canonical: false, header: false, width: nil)
       BulkBuilder.dump(obj, canonical: canonical, header: header, width: width)
     end
