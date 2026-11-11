@@ -69,3 +69,35 @@ RSpec.describe "Unicode break/BOM strings dump byte-stably (C #494-#497)" do
     expect(Yeptris::YAML.dump({ "k" => "07:00:00" })).to include("'07:00:00'")
   end
 end
+
+RSpec.describe "null-valued keys ride bare on both dump faces (yeptris#1264)" do
+  # stdlib Psych's KEY path carries the explicit !!str semantics — the
+  # 1.1 reshape words (y/n/yes/no) never quote as keys — while the
+  # VALUE path reshapes them quoted. The neutral face's string branch
+  # shared one table for both slots, quoting "n" keys the visitor face
+  # (and stdlib) emit bare.
+  it "emits the issue's repro bare on the neutral face" do
+    h = { "s" => "line1\nline2", "n" => nil }
+    expect(Yeptris::YAML.dump(h, header: true))
+      .to eq("---\ns: |-\n  line1\n  line2\nn:\n")
+  end
+
+  it "agrees with the Psych face byte-for-byte" do
+    [{ "s" => "line1\nline2", "n" => nil }, { "n" => nil },
+     { "n" => nil, "s" => "line1\nline2" }, { "y" => 1 }, { "N" => nil }].each do |h|
+      expect(Yeptris::YAML.dump(h, header: true)).to eq(Yeptris::Psych.dump(h))
+    end
+  end
+
+  it "keeps the value path's reshape quoting (stdlib parity)" do
+    expect(Yeptris::YAML.dump({ "k" => "n" }, header: true))
+      .to eq(Yeptris::Psych.dump({ "k" => "n" }))
+    expect(Yeptris::YAML.dump("n", header: true)).to eq("--- \"n\"\n")
+  end
+
+  it "round-trips the bare words through load" do
+    { "n" => "n", "y" => "y" }.each do |k, v|
+      expect(Yeptris::YAML.load(Yeptris::YAML.dump({ k => nil }), schema: :compat_11)[k]).to be_nil
+    end
+  end
+end

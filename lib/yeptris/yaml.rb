@@ -414,7 +414,14 @@ module Yeptris
                 blob << "!!str"
                 off[0] += 5
               elsif k.is_a?(String)
-                place(k, emit, blob, off, seen)
+                # keys ride the explicit-!!str semantics: the 1.1
+                # reshape words (y/n/yes/no...) stay BARE like stdlib's
+                # key path (leptris/yeptris#1264 — the visitor face has
+                # always emitted them bare), so the RESHAPES_SET gate
+                # does not apply; the SAFE_WORD fast lane is the
+                # positional-safety check alone
+                style = k.match?(SAFE_WORD) && !k.end_with?(" ") ? STYLE_PLAIN : STYLE_BY_NAME[string_style(k)]
+                scalar(k, style, emit, blob, off)
               else
                 scalar(k.to_s, STYLE_PLAIN, emit, blob, off)
               end
