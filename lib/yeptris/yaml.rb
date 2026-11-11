@@ -414,13 +414,13 @@ module Yeptris
                 blob << "!!str"
                 off[0] += 5
               elsif k.is_a?(String)
-                # keys ride the explicit-!!str semantics: the 1.1
-                # reshape words (y/n/yes/no...) stay BARE like stdlib's
-                # key path (leptris/yeptris#1264 — the visitor face has
-                # always emitted them bare), so the RESHAPES_SET gate
-                # does not apply; the SAFE_WORD fast lane is the
-                # positional-safety check alone
-                style = k.match?(SAFE_WORD) && !k.end_with?(" ") ? STYLE_PLAIN : STYLE_BY_NAME[string_style(k)]
+                # keys ride psych's ONE visit_String law — stdlib applies
+                # it to keys and values alike, so the reshape words quote
+                # in BOTH positions ("n": 1, 'yes': ...; #1264's premise
+                # had the psych side inverted: stdlib quotes these keys
+                # on every version since 4.0.2). The engine's own
+                # plain-key-safety re-check still guards the position.
+                style = STYLE_BY_NAME[string_style(k)]
                 scalar(k, style, emit, blob, off)
               else
                 scalar(k.to_s, STYLE_PLAIN, emit, blob, off)
@@ -544,11 +544,10 @@ module Yeptris
         return :double if !s.empty? && !s.include?('"') && s.match?(/\A[^[:word:]]/)
         return :single if s.match?(/\A0[0-7]*[89]/)
         return :plain if plain_string?(s)
-        # the Unicode breaks are YAML breaks like \n (raw, re-parse
-        # folds them) and U+FEFF raw is the BOM (re-parse strips it) —
-        # only the double-quoted escapes carry them byte-stably; psych
-        # double-quotes them all (Psych.dump("b\u0085c") == "b\\Nb")
-        return :double if s.each_byte.any? { |b| b < 0x20 || b == 0x7f }
+        # \n and \r are BREAKS in libyaml, not specials - the emitter's
+        # single-quoted law carries them ('x y z\n\n  ': single_quoted_
+        # allowed survives line breaks, #1264's family A); other C0
+        # bytes and DEL need the escapes
         return :double if s.match?(/[\u0085\u2028\u2029\uFEFF]/)
         :single
       end
