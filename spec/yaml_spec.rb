@@ -70,34 +70,55 @@ RSpec.describe "Unicode break/BOM strings dump byte-stably (C #494-#497)" do
   end
 end
 
-RSpec.describe "null-valued keys ride bare on both dump faces (yeptris#1264)" do
-  # stdlib Psych's KEY path carries the explicit !!str semantics — the
-  # 1.1 reshape words (y/n/yes/no) never quote as keys — while the
-  # VALUE path reshapes them quoted. The neutral face's string branch
-  # shared one table for both slots, quoting "n" keys the visitor face
-  # (and stdlib) emit bare.
-  it "emits the issue's repro bare on the neutral face" do
-    h = { "s" => "line1\nline2", "n" => nil }
-    expect(Yeptris::YAML.dump(h, header: true))
-      .to eq("---\ns: |-\n  line1\n  line2\nn:\n")
+RSpec.describe "keys ride psych's one visit_String law (yeptris#1264, corrected)" do
+  # The original #1264 premise had the psych side inverted: stdlib
+  # Psych applies visit_String to keys AND values alike, quoting the
+  # reshape words in BOTH positions ("n": 1, 'yes': ...) on every
+  # version since 4.0.2 — 0.6.62.1's BulkBuilder matched stdlib there
+  # while the visitor face emitted them bare, and 0.6.62.2's
+  # SAFE_WORD fast lane made both faces bare (diverging from stdlib).
+  # The law both faces now share: key style = string_style, exactly
+  # like values; the engine's plain-key-safety re-check guards the
+  # position. The trailing-break family rides the engine's
+  # single_quoted_allowed law ('x y z\n\n  '), gated on the engine
+  # carrying it (CI tests the newest RELEASED tag until a wave lands).
+  let(:engine_carries_sq_breaks) do
+    out = Yeptris::YAML.dump({ "a" => "x y z\n" }, header: true)
+    out == "---\na: 'x y z\n\n  '\n"
   end
 
-  it "agrees with the Psych face byte-for-byte" do
+  it "matches stdlib byte-for-byte on the reshape-word keys" do
     [{ "s" => "line1\nline2", "n" => nil }, { "n" => nil },
-     { "n" => nil, "s" => "line1\nline2" }, { "y" => 1 }, { "N" => nil }].each do |h|
-      expect(Yeptris::YAML.dump(h, header: true)).to eq(Yeptris::Psych.dump(h))
+     { "n" => nil, "s" => "line1\nline2" }, { "y" => 1 }, { "N" => nil },
+     { "yes" => 1 }, { "null" => nil }, { "s" => "text", "y" => nil }].each do |h|
+      expect(Yeptris::YAML.dump(h, header: true)).to eq(Psych.dump(h))
+      expect(Yeptris::Psych.dump(h)).to eq(Psych.dump(h))
     end
   end
 
   it "keeps the value path's reshape quoting (stdlib parity)" do
     expect(Yeptris::YAML.dump({ "k" => "n" }, header: true))
-      .to eq(Yeptris::Psych.dump({ "k" => "n" }))
+      .to eq(Psych.dump({ "k" => "n" }))
     expect(Yeptris::YAML.dump("n", header: true)).to eq("--- \"n\"\n")
   end
 
-  it "round-trips the bare words through load" do
-    { "n" => "n", "y" => "y" }.each do |k, v|
+  it "round-trips the quoted words through load" do
+    { "n" => nil, "y" => nil }.each do |k, _v|
       expect(Yeptris::YAML.load(Yeptris::YAML.dump({ k => nil }), schema: :compat_11)[k]).to be_nil
     end
+  end
+
+  it "renders a trailing-break value single-quoted like stdlib", engine_sq_breaks: true do
+    skip "the engine predates the single_quoted_allowed law (next wave)" unless engine_carries_sq_breaks
+    [{ "a" => "x y z\n", "b" => 1 }, { "a" => "x y z\n", "y" => nil },
+     { "a" => "x y z\n", "n" => 1 }].each do |h|
+      expect(Yeptris::YAML.dump(h, header: true)).to eq(Psych.dump(h))
+    end
+  end
+
+  it "keeps space-before-break values double-quoted (the libyaml control)", engine_sq_breaks: true do
+    skip "the engine predates the single_quoted_allowed law (next wave)" unless engine_carries_sq_breaks
+    h = { "a" => "x \ny" }
+    expect(Yeptris::YAML.dump(h, header: true)).to eq(Psych.dump(h))
   end
 end

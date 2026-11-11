@@ -229,7 +229,19 @@ module Yeptris
               key_node.set_tag("tag:yaml.org,2002:str")
               m.map_add_node(key_node, visit(v))
             else
-              m.map_add(key_text(k), visit(v))
+              # String keys ride psych's ONE visit_String law (the
+              # reshape words quote in key position too: "n": 1,
+              # 'yes': ... — #1264's premise had the psych side
+              # inverted; stdlib quotes these keys on every version
+              # since 4.0.2). Symbols stay :sym text (never through
+              # visit_String), matching stdlib.
+              key_node =
+                if k.is_a?(::String)
+                  ::Yeptris::YAML::Builder.build_string(@tree, k)
+                else
+                  @tree.new_scalar(key_text(k), :plain)
+                end
+              m.map_add_node(key_node, visit(v))
             end
           end
           m
