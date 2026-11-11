@@ -424,12 +424,15 @@ module Yeptris
 
       # Arbitrary object graphs through the YAMLTree visitor
       # (anchors, !ruby/ tags); plain data rides the fast builder.
-      # options reach the engine's emitter: :line_width folds flow
-      # collections past the width (the engine default is 80),
-      # :canonical switches the fixed form; :indentation is accepted
-      # for Psych parity (the engine's YAML emitter has no indentation
-      # knob). The audit round-2 finding — width accepted and
-      # discarded — is closed here and in YAMLTree.create.
+      # options reach the engine's emitter: :line_width is psych's
+      # fold-column knob — 0/nil rides the engine default (80; with the
+      # engine's #1257 flip, block plain/single-quoted scalars fold
+      # there too, matching stdlib Psych's stored-file bytes), a
+      # negative value is the unwrap (the engine clamps it to
+      # never-fold), :canonical switches the fixed form; :indentation
+      # is accepted for Psych parity (the engine's YAML emitter has no
+      # indentation knob). The audit round-2 finding — width accepted
+      # and discarded — is closed here and in YAMLTree.create.
       def dump(obj, io = nil, options = {})
         # stdlib's Object#to_yaml calls Psych.dump(self, options) —
         # the options hash lands in the io slot positionally; treat a

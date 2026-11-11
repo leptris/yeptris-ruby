@@ -190,8 +190,11 @@ class Yeptris::Document
   def serialize(canonical: false, best_width: 0, explicit_doc_start: false)
     ensure_alive!
     len = ::FFI::MemoryPointer.new(:size_t)
+    # any non-zero width builds the opts — negative rides the engine's
+    # #1257 clamp (psych's line_width: -1 unwrap), 0/absent rides the
+    # engine default (80, folding)
     ptr =
-      if canonical || best_width.positive? || explicit_doc_start
+      if canonical || !best_width.zero? || explicit_doc_start
         opts = Yeptris::FFI::EmitOptions.new
         opts[:size] = Yeptris::FFI::EmitOptions.size
         opts[:canonical] = canonical ? 1 : 0
