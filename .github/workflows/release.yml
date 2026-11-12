@@ -464,9 +464,10 @@ jobs:
           # the leg rides debian's distro ruby (trixie = ruby 3.3) — the
           # s390x 3.2 pin pattern taken one step further. RubyGems.org
           # hosts the platform (sass-embedded ships riscv64-linux-{gnu,musl});
-          # the distro rubygems stamps the bare riscv64-linux platform,
-          # which glibc rubies match (musl falls to the source gem, same
-          # as every bare linux leg). leptris-py#346 is the wheel-side twin.
+          # trixie's rubygems stamps riscv64-linux-gnu (rehearsed), which
+          # glibc rubies match and musl skips to the source gem — the same
+          # split as every bare linux leg today. leptris-py#346 is the
+          # wheel-side twin.
           - name: riscv64-linux
             image: debian:trixie
             platform: linux/riscv64
