@@ -429,14 +429,16 @@ jobs:
           path: ${{ runner.temp }}/pgem/**/*.gem
 
   build-qemu:
-    # armv7 gnu+musl, ppc64le, s390x — no hosted runners. The setup
+    # armv7 gnu+musl, ppc64le, s390x, riscv64 — no hosted runners. The setup
     # string is interpolated TEXTUALLY (env-expanded metacharacters
     # are never re-parsed: `&&` reached apt-get as a literal argument
     # once); s390x rides ruby:3.2-bookworm (3.3+ dropped the variant).
     needs: bump
     if: always() && !cancelled() && !failure()
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # riscv64 under TCG is the slowest leg by far (the engine lib +
+    # the ext compile in emulation) — the budget covers it alone
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
@@ -458,6 +460,17 @@ jobs:
             image: ruby:3.2-bookworm
             platform: linux/s390x
             setup: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential git cmake ninja-build
+          # riscv64: NO official ruby image ships the variant at all, so
+          # the leg rides debian's distro ruby (trixie = ruby 3.3) — the
+          # s390x 3.2 pin pattern taken one step further. RubyGems.org
+          # hosts the platform (sass-embedded ships riscv64-linux-{gnu,musl});
+          # the distro rubygems stamps the bare riscv64-linux platform,
+          # which glibc rubies match (musl falls to the source gem, same
+          # as every bare linux leg). leptris-py#346 is the wheel-side twin.
+          - name: riscv64-linux
+            image: debian:trixie
+            platform: linux/riscv64
+            setup: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential git ruby-full ruby-dev cmake ninja-build ca-certificates
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
