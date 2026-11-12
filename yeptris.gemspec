@@ -11,8 +11,12 @@ lib = File.expand_path("lib", __dir__)
 $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 # The gemspec is evaluated by bundle BEFORE dependencies install, so
 # it must not require the library (the ffi chain would explode). The
-# version has ONE source — the parent namespace's file — read as text.
-version = File.read(File.expand_path("lib/yeptris.rb", __dir__))
+# version has ONE source — the parent namespace's file — read as
+# text. encoding: pinned UTF-8 — the file carries UTF-8 prose
+# (em-dashes in comments) and a C/POSIX locale defaults the read to
+# US-ASCII, where this probe's match raises invalid byte sequence
+# (surfaced by the riscv64-linux platform-gem leg).
+version = File.read(File.expand_path("lib/yeptris.rb", __dir__), encoding: "UTF-8")
   .match(/\sVERSION\s=\s"([^"]+)"/)&.captures&.first
 raise "VERSION not found in lib/yeptris.rb" unless version
 
