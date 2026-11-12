@@ -1,4 +1,11 @@
+# encoding: utf-8
 # frozen_string_literal: true
+
+# encoding is pinned: the description carries an em-dash, and under a
+# C/POSIX locale Ruby parses source as US-ASCII, where the literal is
+# a SyntaxError and Gem::Specification.load answers nil (surfaced by
+# the riscv64-linux platform-gem leg; bundle install on C-locale user
+# machines rides the same path).
 
 lib = File.expand_path("lib", __dir__)
 $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
