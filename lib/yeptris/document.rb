@@ -116,8 +116,8 @@ class Yeptris::Document
   # a parse_stream on a multi-doc stream would free the same pointer
   # three times at GC → SIGABRT. This factory builds the wrapper
   # WITHOUT a finalizer; the wrapper's lifetime follows the owner.
-  def self.without_finalizer(c_ptr)
-    doc = new(c_ptr)
+  def self.without_finalizer(c_ptr, source = nil)
+    doc = new(c_ptr, Freed.new(:alive), :core_12, source)
     ObjectSpace.undefine_finalizer(doc)
     doc
   end
@@ -155,6 +155,16 @@ class Yeptris::Document
   # readonly documents never change, so the memo is forever valid).
   def readonly_memo
     @readonly_memo ||= {}
+  end
+
+  # @api private — whether the C marshal materialization lane may
+  # serve this document: refused when the parse source carries a
+  # quoted-symbol literal's byte fingerprint (the C builder names
+  # symbols from the raw scalar text and keeps the quotes, #1304 —
+  # the Ruby walks own the strip until the engine strip lands).
+  # Memoized: the verdict is a property of the immutable source.
+  def marshal_lane_ok?
+    @marshal_lane_ok ||= @source.nil? || ::Yeptris::ValueML.marshal_lane_ok?(@source)
   end
 
   # @api private — the single Node construction path. Query handles

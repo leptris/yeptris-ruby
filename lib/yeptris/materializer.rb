@@ -50,7 +50,28 @@ module Yeptris
     SEXAGESIMAL_INT = /\A[-+]?[1-9][0-9_]*(:[0-5]?[0-9])+\z/
     SEXAGESIMAL_FLOAT = /\A[-+]?[0-9][0-9_]*(:[0-5]?[0-9])+:[0-5]?[0-9]\.[0-9_]*\z/
 
+    # Psych's quoted-symbol capture (scalar_scanner tokenize, the /^:/
+    # arm): /^:(["'])(.*)\1/ — a QUOTED symbol literal names the
+    # UNQUOTED string; the quotes are the scanner's, not the name's
+    # (#1304 — the plain-text strip rode every face as :"\"x y\"").
+    # Escapes do not decode: the literal is a plain scalar, so the
+    # inner text is captured byte for byte. Greedy .* + the backref —
+    # psych's own spelling, no end anchor.
+    QUOTED_SYMBOL = /\A:(["'])(.*)\1/
+
     class << self
+      # The scalar→Symbol name law, ONE place: the quoted literal form
+      # (:"x y" / :'q z') strips the quoting before resolution; the
+      # bare form strips only the leading colon. Every materialization
+      # face rides this — the record walk (scan_by_tag), the columns
+      # walk (str_to_value) and the DOM walk (symbolize). The callers
+      # keep the ":":  guard (plain-colon-only, :: stays a String).
+      def resolve_symbol(text)
+        m = QUOTED_SYMBOL.match(text)
+        return m[2].sub(/\A:/, "").to_sym if m
+
+        text[1..].to_sym
+      end
       # First document of the stream, or nil when the stream is empty.
       def load(yaml, schema: :compat_11)
         docs = load_stream(yaml, schema: schema)
@@ -155,7 +176,7 @@ module Yeptris
           return value unless implicit
 
           value.start_with?(":") && !value.start_with?("::") &&
-            value.length > 1 ? value[1..].to_sym : value
+            value.length > 1 ? resolve_symbol(value) : value
         when TAG_NULL then nil
         when TAG_BOOL
           return value if value.length == 1 # Psych: "y"/"n" stay Strings
