@@ -560,9 +560,21 @@ module Yeptris
               end
             end
           end
-          if node.kind == :scalar && node.tag_id == :timestamp &&
-             !permitted.include?(Date) && !permitted.include?(Time)
-            raise DisallowedClass, "Date"
+          # psych's safe law for the timestamp family (#1305): the gate
+          # applies to the RESOLVED class, not the tag. A plain
+          # timestamp resolves like psych's scanner — date-only to
+          # Date, date+time to Time (ClassLoader::Restricted#time /
+          # #date raise DisallowedClass naming the class) — so the
+          # decision rides the ONE resolver the materializer itself
+          # uses (parse_timestamp); a malformed timestamp text
+          # resolves to String there and psych likewise yields a
+          # String (no gate — plain data).
+          if node.kind == :scalar && node.tag_id == :timestamp
+            resolved = ::Yeptris::Materializer.parse_timestamp(node.value.to_s)
+            klass = resolved.class
+            if (klass == ::Date || klass == ::Time) && !permitted.include?(klass)
+              raise DisallowedClass, klass.name
+            end
           end
           case node.kind
           when :mapping
