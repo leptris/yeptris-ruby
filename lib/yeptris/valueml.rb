@@ -26,17 +26,32 @@ module Yeptris
   # Symbol (Psych's ScalarScanner; quoted ':x' stays a String).
   # Every str-column conversion rides this — the pair fast path
   # drifted once and handed bignums/symbol-keys through as Strings
-  # (audit 2026-10-31).
+  # (audit 2026-10-31). The Symbol arm rides Materializer.resolve_symbol
+  # (#1304: the quoted literal form strips its quoting).
   def self.str_to_value(text, typed)
     return text unless typed
 
     if text.length > 18 && PSYCH_INT_SHAPE.match?(text)
       text.delete(",_").to_i
     elsif text.length > 1 && text.start_with?(":") && !text.start_with?("::")
-      text[1..].to_sym
+      ::Yeptris::Materializer.resolve_symbol(text)
     else
       text
     end
+  end
+
+  # A quoted-symbol literal's byte fingerprint: the plain text of
+  # `:"x y"` / `:'q z'` carries the colon DIRECTLY followed by a
+  # quote. A source that contains it may name a quoted symbol, and
+  # the C marshal builder names symbols from the raw scalar text —
+  # it strips the leading colon but keeps the quotes (engine finding,
+  # #1304). The binding refuses the marshal lane for such sources and
+  # walks in Ruby, where the strip law lives; when the engine strip
+  # lands, the lane reopens by relaxing this one predicate.
+  QUOTED_SYMBOL_TEXT = /:(["'])/.freeze
+
+  def self.marshal_lane_ok?(source)
+    !QUOTED_SYMBOL_TEXT.match?(source)
   end
 
     V_TS = 6

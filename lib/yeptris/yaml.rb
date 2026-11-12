@@ -236,7 +236,7 @@ module Yeptris
 
           index = FFI.read_c_size_t(idx_p)
           if st == FFI::OK
-            doc = Document.without_finalizer(doc_ptr)
+            doc = Document.without_finalizer(doc_ptr, yaml)
             begin
               yield doc.to_ruby, nil
             ensure
@@ -261,8 +261,11 @@ module Yeptris
     # The Marshal fast path when the loaded libyeptris has it (>= 0.1.11
     # era builds), falling back to the columnar drain and finally the
     # record drain — one code path, the fastest the library offers.
+    # The marshal lane is refused for sources that may name a quoted
+    # symbol: the C builder keeps the quotes in the name (#1304), and
+    # the columns/record walks carry the strip law.
     def _drain_all(yaml, schema)
-      if FFI::MARSHAL
+      if FFI::MARSHAL && ValueML.marshal_lane_ok?(yaml)
         result = ValueML.load_all_marshal(yaml, schema: schema, mode: :all)
         return result unless result.nil?
       end

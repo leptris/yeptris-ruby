@@ -289,10 +289,13 @@ class Yeptris::Node
   # turns this subtree into Marshal 4.8 bytes — Marshal.load builds
   # the Ruby objects in C, no per-node FFI. nil when the document
   # carries constructs the format cannot express (merge keys,
-  # timestamps, tagged revivals): the caller walks instead. Raises
-  # ParseError on engine errors (not on the bail).
+  # timestamps, tagged revivals, quoted-symbol literals — the C
+  # builder names symbols from the raw text, #1304): the caller
+  # walks instead. Raises ParseError on engine errors (not on the
+  # bail).
   def marshal_fast
     return nil unless Yeptris::FFI::MARSHAL
+    return nil unless @document.marshal_lane_ok?
 
     out_p = ::FFI::MemoryPointer.new(:pointer)
     olen_p = ::FFI::MemoryPointer.new(:size_t)
@@ -456,14 +459,18 @@ class Yeptris::Node
   end
 
   # Psych's ScalarScanner: plain ":name" (and ":", the null Symbol)
-  # scans to a Symbol; quoting defeats it.
+  # scans to a Symbol; quoting defeats it. The name rides the ONE
+  # resolve law (#1304): a quoted literal form (:"x y") strips the
+  # quoting before resolution.
   def symbol?
     style == :plain && value&.start_with?(":") && !value.start_with?("::")
   end
 
   def symbolize
     v = value
-    v.length <= 1 ? :"" : v[1..].to_sym
+    return :"" if v.length <= 1
+
+    ::Yeptris::Materializer.resolve_symbol(v)
   end
 
 
