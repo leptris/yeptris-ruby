@@ -61,10 +61,16 @@ else
   unless File.exist?(File.join(src_root, "include", "yeptris", "version.h"))
     if File.exist?(vhin)
       # CMakeLists sits at the engine tree's root: the vendored gem
-      # tree (vendor/libyeptris) or the CI checkout (libyeptris-src)
-      ver = File.read(File.join(File.dirname(src_root), "CMakeLists.txt"))[/project\s*\([^)]*?VERSION\s+([0-9.]+)/m, 1] || "0.0.0"
+      # tree (vendor/libyeptris) or the CI checkout (libyeptris-src).
+      # encoding: pinned UTF-8 — the engine sources carry UTF-8 prose
+      # (em-dashes in comments), and a POSIX/C-locale environment
+      # (debian distro ruby, LC_ALL=C users building the source gem)
+      # defaults Ruby's external encoding to US-ASCII, where any byte
+      # >= 0x80 makes this regex raise "invalid byte sequence"
+      # (surfaced by the riscv64-linux platform-gem leg).
+      ver = File.read(File.join(File.dirname(src_root), "CMakeLists.txt"), encoding: "UTF-8")[/project\s*\([^)]*?VERSION\s+([0-9.]+)/m, 1] || "0.0.0"
       maj, min, pat = ver.split(".")
-      File.write("version.h", File.read(vhin)
+      File.write("version.h", File.read(vhin, encoding: "UTF-8")
         .gsub("@PROJECT_VERSION_MAJOR@", maj || "0")
         .gsub("@PROJECT_VERSION_MINOR@", min || "0")
         .gsub("@PROJECT_VERSION_PATCH@", pat || "0")
