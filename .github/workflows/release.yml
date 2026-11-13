@@ -498,11 +498,11 @@ jobs:
           docker run --rm --platform "${{ matrix.platform }}" \
             -v "$RUNNER_TEMP:/work" -w /work "${{ matrix.image }}" sh -c '
             set -eux
-            # the smoke container is FRESH — the build's setup line does not
+            # the smoke container is FRESH - the build setup line does not
             # carry over. The ruby-image legs (arm/ppc64le/s390x/musl) ship
             # gem; alpine needs the ffi package; debian riscv64 (trixie
-            # distro ruby) needs ruby-full — the first leg whose image has
-            # neither (release 0.6.64.0: "gem: not found", exit 127)
+            # distro ruby) needs ruby-full - the first leg whose image has
+            # neither (the 0.6.64.0 publish died at gem install, exit 127)
             if [ -f /etc/alpine-release ]; then apk add --no-cache ruby-ffi >/dev/null 2>&1 || true; fi
             if ! command -v gem >/dev/null 2>&1; then apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ruby-full >/dev/null; fi
             gem install ffi --no-document >/dev/null 2>&1 || true
