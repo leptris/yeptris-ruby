@@ -302,8 +302,14 @@ module Yeptris
     # with the #1257 flip also block plain/single-quoted scalars, the
     # psych/libyaml stored-file behavior); a negative width is psych's
     # line_width: -1 unwrap (the engine clamps it to never-fold).
-      def dump(obj, canonical: false, header: false, width: nil)
-      BulkBuilder.dump(obj, canonical: canonical, header: header, width: width)
+    # merge_tag: the bytes stored for a literal chevron key — the
+    # neutral face pins the shorthand (its documented form); the
+    # Psych facade passes BulkBuilder::MERGE_KEY_TAG (the URI the
+    # engine's tag writer renders as !!str).
+    def dump(obj, canonical: false, header: false, width: nil,
+             merge_tag: "!!str")
+      BulkBuilder.dump(obj, canonical: canonical, header: header,
+                         width: width, merge_tag: merge_tag)
     end
 
 
@@ -325,6 +331,12 @@ module Yeptris
       STYLE_DQ = 3
       STYLE_LIT = 4
       BUILD_TAG = Yeptris::FFI::BUILD_TAG
+      # The chevron-key tag bytes a PSYCH-shaped document carries
+      # (#857/#862): the full core URI — the engine's tag writer
+      # renders !!str from it, while the verbatim shorthand rides the
+      # URI escaper (!%21str) through the bulk build. The neutral
+      # face's default stays the shorthand (its documented form).
+      MERGE_KEY_TAG = "tag:yaml.org,2002:str"
 
       module_function
 
@@ -354,7 +366,7 @@ module Yeptris
                      Yeptris::FFI::BUILD_SEQ => SEQ_ENTRY,
                      Yeptris::FFI::BUILD_END => END_ENTRY }.freeze
 
-      def dump(obj, canonical: false, header: false, width: nil)
+      def dump(obj, canonical: false, header: false, width: nil, merge_tag: "!!str")
         # The nil root rides the bare form (psych's dump(nil) == "\n",
         # #290): the engine's r201 quoted-form law ("a document-root
         # empty scalar rides the quoted form" -- the plain form does not
@@ -367,7 +379,7 @@ module Yeptris
         return header ? "--- \n" : "\n" if obj.nil? && !canonical
 
         doc = Document.create
-        build_into(doc, obj)
+        build_into(doc, obj, merge_tag)
         doc.serialize(canonical: canonical, best_width: width || 0,
                       explicit_doc_start: header)
       ensure

@@ -407,7 +407,7 @@ class Yeptris::Node
     return symbolize if symbol? && tag_id == :str
 
     # !ruby/symbol (#258): psych deserializes the scalar to a Symbol
-    # (both spellings; safety is walk_safe's permitted_classes gate)
+    # (both spellings; safety is check_records's permitted_classes gate)
     if tag == "!ruby/symbol" || tag == "tag:ruby.yaml.org,2002:symbol"
       return value.to_s.to_sym
     end

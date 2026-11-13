@@ -84,7 +84,7 @@ RSpec.describe "safe_load's timestamp permitted gate (#1305)" do
   end
 
   it "keeps the marshal fast lane off the timestamp gate (refusal falls to the checked walk)" do
-    # a timestamp source carries no gate byte, so walk_safe's slice
+    # a timestamp source carries no gate byte, so the clean-lane probe's marshal refusal
     # only stays correct because the marshal builder refuses
     # timestamps — pin the refusal that the gate's correctness rides
     doc = Yeptris::Document.parse(FULL, schema: :compat_11)
