@@ -288,6 +288,10 @@ module Yeptris
     end
     attach_function :yeptris_document_build,
                     %i[yeptris_document pointer size_t pointer size_t], :int
+    # the bulk build's probe (the MARSHAL/MARSHAL_JSON pattern, engine
+    # 0.6.45+): YAMLTree's node-free dump lane (#857) gates on it — an
+    # engine older than the bulk build keeps the per-node walk
+    BULK_BUILD = !(@missing ||= []).include?(:yeptris_document_build)
 
     attach_function :yeptris_serialize, %i[yeptris_document pointer], :pointer
     attach_function :yeptris_serialize_ex,
