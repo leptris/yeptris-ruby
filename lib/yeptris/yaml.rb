@@ -365,6 +365,26 @@ module Yeptris
         # round-trips THROUGH THE BINDING while keeping the engine's
         # invariant untouched.
         return header ? "--- \n" : "\n" if obj.nil? && !canonical
+
+        doc = Document.create
+        build_into(doc, obj)
+        doc.serialize(canonical: canonical, best_width: width || 0,
+                      explicit_doc_start: header)
+      ensure
+        doc&.free
+      end
+
+      # The bulk build itself (#857's shared lane): one flat entry
+      # stream plus one string blob, and yeptris_document_build raises
+      # the DOM in a SINGLE FFI call — per-node FFI is gone. `doc` is
+      # the receiving document (the neutral face creates its own; the
+      # Psych YAMLTree hands its @tree over so finish/document keep
+      # working unchanged). merge_tag: the bytes stored for a literal
+      # chevron key — the neutral face spells the shorthand "!!str"
+      # (its pinned form), the Psych visitor carries the full core URI
+      # the engine's tag writer renders as !!str (the verbatim
+      # shorthand would emit as a LOCAL tag — the writer.c regression).
+      def build_into(doc, obj, merge_tag = "!!str")
         parts = []
         blob = String.new(encoding: Encoding::BINARY)
         off = [0]
@@ -373,19 +393,17 @@ module Yeptris
           parts << (o.zero? && len.zero? && style.zero? ? CONT_ENTRY[op] :
                       [op, style, o, len].pack("CCx2VV"))
         end
-        place(obj, emit, blob, off, {})
-        doc = Document.create
+        place(obj, emit, blob, off, {}, merge_tag)
         buf = ::FFI::MemoryPointer.from_string(parts.join)
         bblob = ::FFI::MemoryPointer.from_string(blob)
         rc = doc.build_entries(buf, parts.length, bblob, blob.bytesize)
         raise DumpError, "document_build failed: #{rc}" unless rc == FFI::OK
-        doc.serialize(canonical: canonical, best_width: width || 0,
-                      explicit_doc_start: header)
-      ensure
-        doc&.free
+        rc
       end
 
-      def place(obj, emit, blob, off, seen)
+      # The flat-value walk. merge_tag threads through the recursion
+      # (the chevron key is the only place the two faces diverge).
+      def place(obj, emit, blob, off, seen, merge_tag = "!!str")
         case obj
         when Hash
           cycle_guard(obj, seen) do
@@ -411,11 +429,12 @@ module Yeptris
               elsif k.is_a?(String) && k == "<<"
                 # stdlib yaml_tree: a literal chevron key carries the
                 # explicit !!str tag (single-quoted) so it does not
-                # re-load as a merge
+                # re-load as a merge — merge_tag carries the spelling
+                # the calling face pins
                 scalar("<<", STYLE_SQ, emit, blob, off)
-                emit.call(BUILD_TAG, 0, off[0], 5)
-                blob << "!!str"
-                off[0] += 5
+                emit.call(BUILD_TAG, 0, off[0], merge_tag.bytesize)
+                blob << merge_tag
+                off[0] += merge_tag.bytesize
               elsif k.is_a?(String)
                 # keys ride psych's ONE visit_String law — stdlib applies
                 # it to keys and values alike, so the reshape words quote
@@ -423,19 +442,32 @@ module Yeptris
                 # had the psych side inverted: stdlib quotes these keys
                 # on every version since 4.0.2). The engine's own
                 # plain-key-safety re-check still guards the position.
-                style = STYLE_BY_NAME[string_style(k)]
-                scalar(k, style, emit, blob, off)
+                if k.encoding == ::Encoding::ASCII_8BIT && !k.ascii_only?
+                  # #168's binary branch is key/value-agnostic (psych's
+                  # visit_String never asks which slot it sits in): strict
+                  # base64 + the short !binary tag + literal style — the
+                  # node walk's build_string already spelled it this way;
+                  # the old double-quote arm carried raw non-UTF8 bytes
+                  # into the document
+                  scalar([k].pack("m0"), STYLE_LIT, emit, blob, off)
+                  emit.call(BUILD_TAG, 0, off[0], 7)
+                  blob << "!binary"
+                  off[0] += 7
+                else
+                  style = STYLE_BY_NAME[string_style(k)]
+                  scalar(k, style, emit, blob, off)
+                end
               else
                 scalar(k.to_s, STYLE_PLAIN, emit, blob, off)
               end
-              place(v, emit, blob, off, seen)
+              place(v, emit, blob, off, seen, merge_tag)
             end
             emit.call(STOP, 0, 0, 0)
           end
         when Array
           cycle_guard(obj, seen) do
             emit.call(SEQ, 0, 0, 0)
-            obj.each { |e| place(e, emit, blob, off, seen) }
+            obj.each { |e| place(e, emit, blob, off, seen, merge_tag) }
             emit.call(STOP, 0, 0, 0)
           end
         when String

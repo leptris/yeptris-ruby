@@ -12,6 +12,11 @@ module Yeptris
       # objects, aliases for repeats, the Encodable protocol, and the
       # !ruby/... tags Psych's own emitter produces.
       class YAMLTree
+        # The chevron KEY tag the bulk lane stores: the full core URI
+        # the engine's tag writer renders as !!str (the verbatim
+        # shorthand would emit as a LOCAL tag — writer.c's regression).
+        MERGE_KEY_TAG = "tag:yaml.org,2002:str"
+
         # stdlib's factory (relaton's db cache calls it): the options
         # reach the engine's emitter — :line_width and :canonical ride
         # yeptris_emit_options (13B), :indentation is accepted for
@@ -22,22 +27,41 @@ module Yeptris
           new(options: options)
         end
 
-        def initialize(schema: nil, options: {})
+        # force_node: the node walk's escape hatch — the A/B switch the
+        # byte-parity specs drive (#857). Hosts never pass it; stdlib's
+        # .create(options, emitter) signature is untouched.
+        def initialize(schema: nil, options: {}, force_node: false)
           @options = options || {}
           @tree = ::Yeptris::Document.create(schema: schema)
           @names = {}  # object_id -> anchor name
           @counter = 0
+          @bulk_ok = ::Yeptris::FFI::BULK_BUILD && !force_node
+          @force_node = force_node
         end
 
         def push(obj)
           @refs = Hash.new(0)
           @refs[obj.object_id] += 1 # the root counts as a reference
+          # re-armed per push: the gate walk below clears it for any
+          # graph the bulk lane cannot express
+          @fast = @bulk_ok && !@force_node
           count_refs(obj, {})
+          if @fast
+            build_bulk(obj) # the node-free lane (#857): one FFI call, no handles
+            return self
+          end
           root = visit(obj)
           @tree.set_root(root) if root
           self
         end
         alias_method :<<, :push # stdlib's dump body pushes via <<
+
+        # Whether push took the node-free lane. False when the graph
+        # carries anchor candidates, tagged/object shapes, or the
+        # engine predates the bulk build (the capability probe).
+        def fast_lane?
+          @took_fast == true
+        end
 
         # stdlib Psych.dump's tail: `visitor.tree.yaml io, options` —
         # the tree wraps the built document; yaml serializes it
@@ -139,21 +163,34 @@ module Yeptris
           [:new, name]
         end
 
+        # The reference-count walk doubles as the node-free lane's
+        # gate (#857): the graph rides the bulk build only when every
+        # value is a plain-data type AND no anchorable object repeats
+        # (anchors/aliases are inexpressible in the flat entry stream).
         def count_refs(obj, seen)
           return if seen.key?(obj.object_id)
 
           seen[obj.object_id] = true
           case obj
           when Hash
-            obj.each_value { |v| @refs[v.object_id] += 1; count_refs(v, seen) }
+            obj.each_value { |v| bump_ref(v); count_refs(v, seen) }
           when Array
-            obj.each { |v| @refs[v.object_id] += 1; count_refs(v, seen) }
+            obj.each { |v| bump_ref(v); count_refs(v, seen) }
           when Struct
+            @fast = false # !ruby/struct tag
             obj.each_pair { |_k, v| @refs[v.object_id] += 1; count_refs(v, seen) }
           when Set
+            @fast = false # !ruby/set tag
             obj.each { |v| @refs[v.object_id] += 1; count_refs(v, seen) }
-          when ::String, ::Integer, ::Float, ::Symbol, ::Date, ::Time, true, false, nil, ::Numeric
-            # immutables: identity anchors are meaningless
+          when ::String, ::Integer, ::Float, ::Symbol, ::Date, ::Time, true, false, nil
+            # bulk-lane immutables — except DateTime, which carries the
+            # !ruby/object:DateTime tag even when unshared (the visit
+            # dispatch's own DateTime arm)
+            @fast = false if obj.is_a?(::DateTime)
+          when ::Numeric
+            # BigDecimal & co: visit's refuse_dump owns the contract
+            # (and its message) — the node walk keeps it
+            @fast = false
           else
             unless obj.instance_of?(::Object)
               refuse_dump(obj) unless obj.is_a?(Encodable)
@@ -170,7 +207,35 @@ module Yeptris
                 coder.each { |_k, v| @refs[v.object_id] += 1; count_refs(v, seen) }
               end
             end
+            @fast = false # bare Object and Encodable: the node walk owns them
           end
+        end
+
+        # A SECOND occurrence forces the node walk when the object's
+        # visit arm anchors (Hash/Array and the timestamp family —
+        # anchored_scalar). Plain scalars never anchor (the stdlib
+        # law), so shared strings, numbers, bools and nils stay on the
+        # bulk lane.
+        def bump_ref(v)
+          @refs[v.object_id] += 1
+          return unless @refs[v.object_id] == 2
+
+          @fast = false unless v.is_a?(::String) || v.is_a?(::Symbol) ||
+                               v.is_a?(::Integer) || v.is_a?(::Float) ||
+                               v.equal?(true) || v.equal?(false) || v.nil?
+        end
+
+        def build_bulk(obj)
+          # The node-free lane (#857): the SAME flat entry stream the
+          # neutral face's BulkBuilder feeds yeptris_document_build —
+          # one FFI call raises the document, zero node handles, zero
+          # anchor bookkeeping (a graph that needed any would have
+          # taken the node walk above). Merge keys carry the FULL core
+          # URI: the engine's tag writer spells !!str from it (the
+          # verbatim shorthand would emit as a LOCAL tag — the
+          # writer.c chevron-key regression).
+          ::Yeptris::YAML::BulkBuilder.build_into(@tree, obj, MERGE_KEY_TAG)
+          @took_fast = true
         end
 
         def refuse_dump(obj)
