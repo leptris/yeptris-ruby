@@ -249,6 +249,14 @@ module Yeptris
       walk(flat, arena)
     end
 
+    # The compositional seam for hosts that need the records BEFORE the
+    # build (the #862 facade gate: one drain feeds the permission check
+    # AND the materialization — no per-node FFI, no second parse).
+    # Arguments are exactly what Materializer.drain returns.
+    def materialize_records(flat, arena)
+      walk(flat, arena)
+    end
+
     private
 
     # The stack machine: containers on a stack, a pending-key slot per
@@ -257,9 +265,10 @@ module Yeptris
     # (<<) resolve inline: existing keys win, sequences merge in
     # order — Psych load-time semantics.
     #
-    # flat: one Integer per unpack field, 12 per record:
-    # 0 type, 1 style, 2 flags, 3 tag_id, 4 line, 5 col, 6 value_off,
-    # 7 value_len, 8 anchor_off, 9 anchor_len, 10 tag_off, 11 tag_len.
+    # flat: one Integer per unpack field, 14 per record (RECORD_UNPACK
+    # = C4V10): 0 type, 1 style, 2 flags, 3 tag_id, 4 line, 5 col,
+    # 6 end_line, 7 end_col (#179), 8 value_off, 9 value_len,
+    # 10 anchor_off, 11 anchor_len, 12 tag_off, 13 tag_len.
     def walk(flat, arena)
       docs = []
       stack = []
@@ -289,6 +298,14 @@ module Yeptris
           v = Materializer.scan_by_tag(
             arena[flat[i + 8], flat[i + 9]], tag_id, (flat[i + 2] & EF_IMPLICIT) != 0
           )
+          # !ruby/symbol (#258): the tag TEXT (not the resolver tag_id)
+          # decides — psych deserializes the scalar to a Symbol, the
+          # same arm the DOM walk carries (Node#scalar_to_ruby)
+          tl = flat[i + 13]
+          if tl != 0
+            t = arena[flat[i + 12], tl]
+            v = v.to_sym if t == "!ruby/symbol" || t == "tag:ruby.yaml.org,2002:symbol"
+          end
           l = flat[i + 11]
           anchors[arena[flat[i + 10], l]] = v if l != 0
           # place(): the scalar fast path inlined — the overwhelming
@@ -304,7 +321,7 @@ module Yeptris
               else
                 pending_key[-1] = nil
                 if pending_key_merge[-1]
-                  merge_into(parent, v)
+                  Materializer.merge_into(parent, v)
                 else
                   parent[key] = v
                 end
@@ -331,7 +348,12 @@ module Yeptris
           pending_key_merge.push(nil)
         when ALIAS
           name = arena[flat[i + 8], flat[i + 9]]
-          raise Yeptris::ParseError, "unknown anchor: #{name.inspect}" unless anchors.key?(name)
+          # the engine DOM parse's spelling, with the record's own
+          # location — the ONE undefined-anchor phrase every face
+          # raises (the facade's AnchorNotDefined lift matches on it)
+          raise Yeptris::ParseError,
+                "alias references an undefined anchor at line #{flat[i + 4]}, " \
+                "column #{flat[i + 5]}: #{name.inspect}" unless anchors.key?(name)
 
           place(docs, stack, pending_key, pending_key_merge, anchors[name])
         when MAPPING_END, SEQUENCE_END
@@ -339,7 +361,7 @@ module Yeptris
           pending_key.pop
           pending_key_merge.pop
           target = merge_target.pop
-          merge_into(target, done) if target
+          Materializer.merge_into(target, done) if target
         when DOCUMENT_START
           # anchors are per-document (the engine memo law; PyYAML's
           # composer resets per document): a later document's alias
@@ -373,7 +395,7 @@ module Yeptris
         key = pending_key.last
         pending_key[-1] = nil
         if pending_key_merge[-1]
-          merge_into(parent, obj)
+          Materializer.merge_into(parent, obj)
           parent
         else
           parent[key] = obj

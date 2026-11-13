@@ -7,10 +7,11 @@
 # Order-alternating interleaved A/B against stdlib Psych (the same
 # discipline as json_profile.rb), on an #862-shaped corpus: a
 # top-level hash of 6699 entries mapping style keys to arrays of
-# strings (the fontist formula index). Also prints the safe_load
-# pipeline decomposition (parse / gate walk / build / utf8 retag) and
-# exercises the GATED fallback (a document with aliases and explicit
-# tags) so a fast-path change is visible against both paths.
+# strings (the fontist formula index). Covers safe_load (clean +
+# gated), load, and dump, and prints the pipeline decomposition
+# (clean marshal lane / recorder drain / records gate+build) plus the
+# GATED fallback (a document with aliases and explicit tags) so a
+# lane change is visible against both paths.
 #
 #   bundle exec ruby benchmark/psych_profile.rb [iterations] [entries]
 #
@@ -94,36 +95,50 @@ puts
 ab("safe_load clean", -> { ::Psych.safe_load(CLEAN) }, -> { Yeptris::Psych.safe_load(CLEAN) }, N)
 ab("safe_load gated", -> { ::Psych.safe_load(GATED, **GATED_OPTS) },
    -> { Yeptris::Psych.safe_load(GATED, **GATED_OPTS) }, N)
+ab("load clean", -> { ::Psych.load(CLEAN) }, -> { Yeptris::Psych.load(CLEAN) }, N)
 
-# The pipeline decomposition (clean corpus): what each pass costs in
-# isolation, so a change to any pass is attributable.
-root = nil
-doc = nil
-pass = lambda do |&blk|
-  doc = Yeptris::Document.parse(CLEAN, schema: :compat_11)
-  root = doc.root(0)
-  blk.call
-ensure
-  doc&.free
+# The #862 dump rows: stdlib's dump walks the object graph through the
+# YAMLTree visitor (libyaml event emitter); the facade's plain-data
+# lane is the BulkBuilder (one build_entries call + one serialize).
+DATA = ::Psych.safe_load(CLEAN)
+raise "dump parity broken" unless ::Psych.dump(DATA) == Yeptris::Psych.dump(DATA)
+
+::Psych.dump(DATA)
+Yeptris::Psych.dump(DATA)
+puts
+puts "== dump =="
+ab("dump hash-of-seqs", -> { ::Psych.dump(DATA) }, -> { Yeptris::Psych.dump(DATA) }, N)
+ab("dump stream-io", lambda {
+                      io = StringIO.new
+                      ::Psych.dump(DATA, io)
+                    }, lambda {
+                         io = StringIO.new
+                         Yeptris::Psych.dump(DATA, io)
+                       }, N)
+
+# The pipeline decomposition (clean corpus): what each lane costs in
+# isolation, so a change to any lane is attributable. The clean lane
+# is ONE C call (marshal); the gated lane is the recorder drain + the
+# record-array gate + the record stack machine.
+times = Array.new(N) do
+  Benchmark.realtime { ::Yeptris::ValueML.load_all_marshal(CLEAN, schema: :compat_11, mode: :all) }
 end
+puts format("  clean lane (marshal, one call)  %8.2f ms", times.sum / N * 1000)
 
 times = Array.new(N) do
-  t = Benchmark.realtime { pass.call { root&.marshal_fast } }
-  t
+  Benchmark.realtime { ::Yeptris::Materializer.drain(CLEAN, schema: :compat_11) }
 end
-puts format("  parse+marshal build  %8.2f ms", times.sum / N * 1000)
+puts format("  recorder drain                  %8.2f ms", times.sum / N * 1000)
 
 times = Array.new(N) do
-  t = Benchmark.realtime do
-    pass.call do
-      begin
-        Yeptris::Psych.send(:check, root, [::Date, ::Time], false)
-      rescue Yeptris::Psych::DisallowedClass, Yeptris::Psych::AliasesError
-        # the gated decomposition: the walk's raise IS its result
-        nil
-      end
+  Benchmark.realtime do
+    flat, arena = ::Yeptris::Materializer.drain(CLEAN, schema: :compat_11)
+    begin
+      ::Yeptris::Psych.send(:check_records, flat, arena, [::Date, ::Time], false)
+    rescue ::Yeptris::Psych::DisallowedClass, ::Yeptris::Psych::AliasesError
+      nil
     end
+    ::Yeptris::Materializer.new.materialize_records(flat, arena)
   end
-  t
 end
-puts format("  parse+gate walk      %8.2f ms", times.sum / N * 1000)
+puts format("  gated lane (drain+gate+build)   %8.2f ms", times.sum / N * 1000)

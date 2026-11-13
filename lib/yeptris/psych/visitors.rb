@@ -15,7 +15,8 @@ module Yeptris
         # The chevron KEY tag the bulk lane stores: the full core URI
         # the engine's tag writer renders as !!str (the verbatim
         # shorthand would emit as a LOCAL tag — writer.c's regression).
-        MERGE_KEY_TAG = "tag:yaml.org,2002:str"
+        # One definition, in the writer of the tag bytes (BulkBuilder).
+        MERGE_KEY_TAG = ::Yeptris::YAML::BulkBuilder::MERGE_KEY_TAG
 
         # stdlib's factory (relaton's db cache calls it): the options
         # reach the engine's emitter — :line_width and :canonical ride

@@ -209,21 +209,59 @@ module Yeptris
       def safe_load(yaml, permitted_classes: [::Date, ::Time], aliases: false,
                     symbolize_names: false, **)
         # ONE read at the boundary (read_input): IO-like input must be
-        # consumed once — the string rides parse AND the slice below
+        # consumed once — the string rides every lane below
         source = ::Yeptris.read_input(yaml)
         begin
-          doc = Yeptris::Document.parse(source, schema: :compat_11)
-          return nil if doc.nil? # the legal empty stream
-
-          res = force_utf8_scalars(walk_safe(doc.root(0), permitted_classes, aliases, source))
+          res = safe_load_source(source, permitted_classes, aliases)
           res = deep_symbolize_keys(res) if symbolize_names
           res
         rescue ::Yeptris::ParseError => e
-          doc&.free unless doc&.freed?
           translate_parse_error(e)
-        ensure
-          doc&.free
         end
+      end
+
+      # The drain-lane dispatcher (#862). The gate walk IS the facade's
+      # parse cost — per-node FFI reads paid twice (check + to_ruby).
+      # Two byte facts retire it for clean sources: the parser cannot
+      # build an alias without a `*` byte, cannot build an explicit tag
+      # without a `!` byte — and the marshal builder refuses timestamps
+      # and merge keys, so its SUCCESS proves the gate could not have
+      # raised: ONE C call materializes the whole graph (the same lane
+      # Yeptris::YAML rides). A refusal (timestamps, merge keys, quoted
+      # symbols) or a gate byte drops onto the records lane — one
+      # recorder drain feeds BOTH the permission check (over the flat
+      # record array, pure Ruby) and the build.
+      def safe_load_source(source, permitted, aliases_enabled)
+        res =
+          if ::Yeptris::FFI::MARSHAL && !source.include?("*") &&
+             !source.include?("!") && ValueML.marshal_lane_ok?(source)
+            docs = ValueML.load_all_marshal(source, schema: :compat_11, mode: :all)
+            # nil = the marshal lane refused (its refusal IS the gate
+            # probe): the records lane judges. An empty stream marshals
+            # as [nil] — the first document, exactly the legal-empty nil.
+            docs.nil? ? records_lane(source, permitted, aliases_enabled)
+                      : (docs.empty? ? nil : docs.first)
+          else
+            records_lane(source, permitted, aliases_enabled)
+          end
+        # The Unicode re-tag (#135) provably does nothing for an
+        # ASCII-only source: no scalar can carry a non-ASCII byte, so
+        # no BINARY string can pass the valid-UTF-8 probe — the whole
+        # result-tree walk is skipped.
+        return res if res.nil? || source.ascii_only?
+
+        force_utf8_scalars(res)
+      end
+
+      # The gated lane: ONE recorder drain, the permission check over
+      # the flat record array (no per-node FFI), then the record stack
+      # machine builds the graph — the same Materializer the direct
+      # surface rides.
+      def records_lane(source, permitted, aliases_enabled)
+        flat, arena = ::Yeptris::Materializer.drain(source, schema: :compat_11)
+        check_records(flat, arena, permitted, aliases_enabled)
+        docs = ::Yeptris::Materializer.new.materialize_records(flat, arena)
+        docs.empty? ? nil : docs.first
       end
 
       # A YAML stream is a Unicode character stream: stdlib psych tags
@@ -374,9 +412,10 @@ module Yeptris
 
       # The first document's node tree (no Ruby materialization).
       def translate_parse_error(e)
-        # yeptris rejects *foo without &foo at PARSE time (stdlib
-        # raises at visit) — surface it as stdlib's class so
-        # consumers' rescues keep working
+        # yeptris rejects *foo without &foo (the DOM parse at parse
+        # time; the record walk at resolution — the SAME "undefined
+        # anchor" phrase) — surface it as stdlib's class so consumers'
+        # rescues keep working
         raise AnchorNotDefined, e.message if e.message.include?("undefined anchor")
 
         raise SyntaxError.from_parse_error(e)
@@ -441,10 +480,12 @@ module Yeptris
           options = io
           io = nil
         end
-        # scalars take the fast builder; EVERYTHING else (including
-        # plain containers — they may nest custom objects) goes
-        # through the visitor, which builds the same DOM for plain
-        # data anyway
+        # scalars take the fast builder; plain-data containers take it
+        # too (the #862 dump cut: ONE bulk build + ONE serialize — the
+        # YAMLTree DOM build is per-node FFI and buried the engine's
+        # speed on document-tree workloads); EVERYTHING else (custom
+        # objects, Struct/Set, DateTime, shared containers) goes
+        # through the visitor
         out =
           case obj
           # DateTime < Date in ruby's hierarchy — the fast scalar
@@ -455,6 +496,16 @@ module Yeptris
           when nil, true, false, ::String, ::Integer, ::Float, ::Symbol, ::Date, ::Time
             Yeptris::YAML.dump(obj, header: true, width: options[:line_width],
                                      canonical: options[:canonical] ? true : false)
+          when ::Hash, ::Array
+            if plain_graph?(obj, {})
+              # merge_tag: the URI the engine's tag writer renders as
+              # !!str (the shorthand rides the bulk build's URI escaper)
+              Yeptris::YAML.dump(obj, header: true, width: options[:line_width],
+                                       canonical: options[:canonical] ? true : false,
+                                       merge_tag: Yeptris::YAML::BulkBuilder::MERGE_KEY_TAG)
+            else
+              Visitors::YAMLTree.new(options: options).push(obj).finish
+            end
           else
             Visitors::YAMLTree.new(options: options).push(obj).finish
           end
@@ -466,35 +517,58 @@ module Yeptris
 
       private
 
-      # yeptris materializes plain data only — there is nothing
-      # unsafe it COULD load. The safety walk enforces Psych's
-      # contract: aliases need opt-in, explicit non-core tags raise
-      # DisallowedClass, and a scalar whose IMPLICIT typing yields a
-      # class outside the permitted set raises too (issue #69: a
-      # compat_11 date must not become a Date unless Date is
-      # permitted — Psych::DisallowedClass semantics).
-      #
-      # The single-pass slice (#862): the gate walk IS the cost —
-      # per-node FFI reads. Three provable facts retire it for clean
-      # documents: the parser cannot build an alias without a `*`
-      # byte in the source, cannot build an explicit tag without a
-      # `!` byte, and the marshal builder REFUSES timestamps and
-      # merge keys (its success proves none exist — every
-      # timestamp-typed shape is refused, verified per shape). So
-      # `marshal_fast` doubles as the probe AND the build in one C
-      # call: on a gate-free source its success proves check() could
-      # not have raised, and the walk disappears; a refusal or a gate
-      # byte falls back to the checked walk, which is byte-for-byte
-      # the old path.
-      def walk_safe(root, permitted, aliases_enabled, source = nil)
-        if root && !source.nil? &&
-           !source.include?("*") && !source.include?("!")
-          fast = root.marshal_fast
-          return fast unless fast.nil?
+      # The bulk lane's admission probe (#862): true when every node is
+      # plain data AND no anchorable object repeats — the visitor
+      # anchors a repeated Hash/Array (&1/*1, the stdlib law) and a
+      # repeated Time/Date alike (visit_Time/visit_Date route through
+      # anchored_scalar; test_alias_with_time), the bulk walk would
+      # duplicate them instead, so those graphs keep the visitor.
+      # Strings/symbols/numbers never anchor (immutable identity), so
+      # they are leaves. Keys ride both builders' identical key law
+      # (nil → `! ''`, "<<" → !!str, Strings → the visit_String rules,
+      # Symbols → :sym, everything else → to_s plain), so only VALUES
+      # are probed. Numeric beyond Integer/Float (BigDecimal) and
+      # DateTime keep the visitor, matching what the visitor does with
+      # them.
+      BULK_LEAF = [::String, ::Symbol, ::Integer, ::Float, ::TrueClass,
+                   ::FalseClass, ::NilClass].freeze
+      private_constant :BULK_LEAF
+
+      def plain_graph?(obj, seen)
+        case obj
+        when ::Hash
+          return false if seen.key?(obj.object_id)
+
+          seen[obj.object_id] = true
+          obj.each_value { |v| return false unless plain_graph?(v, seen) }
+          true
+        when ::Array
+          return false if seen.key?(obj.object_id)
+
+          seen[obj.object_id] = true
+          obj.each { |v| return false unless plain_graph?(v, seen) }
+          true
+        when ::Time, ::Date
+          # DateTime < Date: the visitor carries its !ruby/object:DateTime tag
+          return false if obj.is_a?(::DateTime)
+          # identity-anchored per object (unlike the immutables)
+          return false if seen.key?(obj.object_id)
+
+          seen[obj.object_id] = true
+          true
+        else
+          BULK_LEAF.any? { |k| obj.is_a?(k) }
         end
-        check(root, permitted, aliases_enabled) if root
-        root.to_ruby
       end
+
+      # yeptris materializes plain data only — there is nothing
+      # unsafe it COULD load. The safety enforcement lives on the
+      # drained records (check_records): aliases need opt-in, explicit
+      # non-core tags raise DisallowedClass, and a scalar whose
+      # RESOLVED typing yields a class outside the permitted set
+      # raises too (issue #69: a compat_11 date must not become a
+      # Date unless Date is permitted — Psych::DisallowedClass
+      # semantics).
 
       PERMITTED_BY_DEFAULT = [TrueClass, FalseClass, NilClass, Integer, Float,
                               String, Array, Hash].freeze
@@ -535,56 +609,71 @@ module Yeptris
         end
       end
 
-      def check(node, permitted, aliases_enabled)
-        case node.kind
-        when :alias
-          raise AliasesError, "Unknown alias" unless aliases_enabled
-        when :scalar, :mapping, :sequence
-          tag = node.tag
-          unless tag.nil?
-            # both tag spellings pass: the URI form's last segment and
-            # the short "!binary" shorthand (#168's cassettes carry it)
-            name = tag.split(":").last.sub(/\A!/, "")
-            unless CORE_TAGS.include?(name)
-              # #258: !ruby/… tags follow psych's ClassLoader rules —
-              # the scalar primitives (string/integer/float) coerce
-              # through the scanner and are allowed as-is; !ruby/symbol
-              # passes exactly when Symbol is in permitted_classes;
-              # class-bearing forms (ruby/object:K, ruby/hash:K, …)
-              # pass when K is in permitted_classes
-              short = ruby_tag_short(tag)
-              unless RUBY_TAG_PRIMITIVES.include?(short)
-                klass = ruby_tag_class(short)
-                raise DisallowedClass, name if klass.nil?
-                raise DisallowedClass, name unless permitted.include?(klass)
+      # The gate over drained records — the same law as the old
+      # per-node DOM walk, read off the flat record array instead of
+      # FFI handles: alias records need opt-in; an explicit tag
+      # (tag_len != 0, any node kind) follows the core/ruby rules; and
+      # a timestamp tag_id resolves through parse_timestamp and rides
+      # the permitted set. Records are 14 fields, type first
+      # (Materializer::FIELDS; the #179 layout puts end_line/end_col
+      # at 6/7, the value at 8/9, the anchor at 10/11 and the tag
+      # text at 12/13 — the walk() reads are the SSOT).
+      def check_records(flat, arena, permitted, aliases_enabled)
+        # The timestamp gate needs the RESOLVED class only when the
+        # permitted set cannot absorb both answers (the facade default
+        # permits Date AND Time — the resolution is skipped entirely).
+        gate_ts = !(permitted.include?(::Date) && permitted.include?(::Time))
+        m = ::Yeptris::Materializer
+        i = 0
+        n = flat.length
+        while i < n
+          type = flat[i]
+          if type == m::ALIAS
+            raise AliasesError, "Unknown alias" unless aliases_enabled
+          else
+            l = flat[i + 13]
+            if l != 0
+              tag = arena[flat[i + 12], l]
+              # the bare non-specific tag (`! ''` — the nil-key form,
+              # #300): the DOM face normalized it away (node.tag nil),
+              # the record keeps it verbatim — it names no class and is
+              # always plain data
+              unless tag == "!"
+                # both tag spellings pass: the URI form's last segment and
+                # the short "!binary" shorthand (#168's cassettes carry it)
+                name = tag.split(":").last.sub(/\A!/, "")
+                unless CORE_TAGS.include?(name)
+                  # #258: !ruby/… tags follow psych's ClassLoader rules —
+                  # the scalar primitives (string/integer/float) coerce
+                  # through the scanner and are allowed as-is; !ruby/symbol
+                  # passes exactly when Symbol is in permitted_classes;
+                  # class-bearing forms (ruby/object:K, ruby/hash:K, …)
+                  # pass when K is in permitted_classes
+                  short = ruby_tag_short(tag)
+                  unless RUBY_TAG_PRIMITIVES.include?(short)
+                    klass = ruby_tag_class(short)
+                    raise DisallowedClass, name if klass.nil?
+                    raise DisallowedClass, name unless permitted.include?(klass)
+                  end
+                end
+              end
+            end
+            # psych's safe law for the timestamp family (#1305): the
+            # gate applies to the RESOLVED class, not the tag. A
+            # timestamp resolves like psych's scanner — date-only to
+            # Date, date+time to Time — via the ONE resolver the
+            # materializer itself uses; a malformed timestamp text
+            # resolves to String there and psych likewise yields a
+            # String (no gate — plain data).
+            if gate_ts && type == m::SCALAR && flat[i + 3] == m::TAG_TIMESTAMP
+              resolved = m.parse_timestamp(arena[flat[i + 8], flat[i + 9]])
+              klass = resolved.class
+              if (klass == ::Date || klass == ::Time) && !permitted.include?(klass)
+                raise DisallowedClass, klass.name
               end
             end
           end
-          # psych's safe law for the timestamp family (#1305): the gate
-          # applies to the RESOLVED class, not the tag. A plain
-          # timestamp resolves like psych's scanner — date-only to
-          # Date, date+time to Time (ClassLoader::Restricted#time /
-          # #date raise DisallowedClass naming the class) — so the
-          # decision rides the ONE resolver the materializer itself
-          # uses (parse_timestamp); a malformed timestamp text
-          # resolves to String there and psych likewise yields a
-          # String (no gate — plain data).
-          if node.kind == :scalar && node.tag_id == :timestamp
-            resolved = ::Yeptris::Materializer.parse_timestamp(node.value.to_s)
-            klass = resolved.class
-            if (klass == ::Date || klass == ::Time) && !permitted.include?(klass)
-              raise DisallowedClass, klass.name
-            end
-          end
-          case node.kind
-          when :mapping
-            node.each_pair do |k, v|
-              check(k, permitted, aliases_enabled)
-              check(v, permitted, aliases_enabled)
-            end
-          when :sequence
-            node.each { |e| check(e, permitted, aliases_enabled) }
-          end
+          i += m::FIELDS
         end
       end
     end
