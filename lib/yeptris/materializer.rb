@@ -281,7 +281,10 @@ module Yeptris
 
       # the arena is UTF-8 by construction (validated at parse), so
       # forcing its encoding ONCE makes every slice UTF-8 for free —
-      # no per-scalar force_encoding
+      # no per-scalar force_encoding. The record offsets are BYTES:
+      # slice with byteslice, never String#[] — on a UTF-8 String that
+      # counts characters and drifts after the first multibyte char
+      # (#1359)
       arena.force_encoding(Encoding::UTF_8)
       # (each_slice DESTRUCTURING measured SLOWER than plain indexing
       # here: it allocates a 12-slot Array per record. Index away.)
@@ -296,18 +299,18 @@ module Yeptris
           # not the text
           tag_id = flat[i + 3]
           v = Materializer.scan_by_tag(
-            arena[flat[i + 8], flat[i + 9]], tag_id, (flat[i + 2] & EF_IMPLICIT) != 0
+            arena.byteslice(flat[i + 8], flat[i + 9]), tag_id, (flat[i + 2] & EF_IMPLICIT) != 0
           )
           # !ruby/symbol (#258): the tag TEXT (not the resolver tag_id)
           # decides — psych deserializes the scalar to a Symbol, the
           # same arm the DOM walk carries (Node#scalar_to_ruby)
           tl = flat[i + 13]
           if tl != 0
-            t = arena[flat[i + 12], tl]
+            t = arena.byteslice(flat[i + 12], tl)
             v = v.to_sym if t == "!ruby/symbol" || t == "tag:ruby.yaml.org,2002:symbol"
           end
           l = flat[i + 11]
-          anchors[arena[flat[i + 10], l]] = v if l != 0
+          anchors[arena.byteslice(flat[i + 10], l)] = v if l != 0
           # place(): the scalar fast path inlined — the overwhelming
           # majority of events land here
           if stack.empty?
@@ -333,7 +336,7 @@ module Yeptris
         when MAPPING_START
           h = {}
           l = flat[i + 11]
-          anchors[arena[flat[i + 10], l]] = h if l != 0
+          anchors[arena.byteslice(flat[i + 10], l)] = h if l != 0
           merge_target.push(place(docs, stack, pending_key, pending_key_merge, h))
           stack.push(h)
           pending_key.push(nil)
@@ -341,13 +344,13 @@ module Yeptris
         when SEQUENCE_START
           a = []
           l = flat[i + 11]
-          anchors[arena[flat[i + 10], l]] = a if l != 0
+          anchors[arena.byteslice(flat[i + 10], l)] = a if l != 0
           merge_target.push(place(docs, stack, pending_key, pending_key_merge, a))
           stack.push(a)
           pending_key.push(nil)
           pending_key_merge.push(nil)
         when ALIAS
-          name = arena[flat[i + 8], flat[i + 9]]
+          name = arena.byteslice(flat[i + 8], flat[i + 9])
           # the engine DOM parse's spelling, with the record's own
           # location — the ONE undefined-anchor phrase every face
           # raises (the facade's AnchorNotDefined lift matches on it)

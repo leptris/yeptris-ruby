@@ -617,7 +617,8 @@ module Yeptris
       # the permitted set. Records are 14 fields, type first
       # (Materializer::FIELDS; the #179 layout puts end_line/end_col
       # at 6/7, the value at 8/9, the anchor at 10/11 and the tag
-      # text at 12/13 — the walk() reads are the SSOT).
+      # text at 12/13 — the walk() reads are the SSOT). Offsets are
+      # bytes: byteslice, whatever the arena's encoding (#1359).
       def check_records(flat, arena, permitted, aliases_enabled)
         # The timestamp gate needs the RESOLVED class only when the
         # permitted set cannot absorb both answers (the facade default
@@ -633,7 +634,7 @@ module Yeptris
           else
             l = flat[i + 13]
             if l != 0
-              tag = arena[flat[i + 12], l]
+              tag = arena.byteslice(flat[i + 12], l)
               # the bare non-specific tag (`! ''` — the nil-key form,
               # #300): the DOM face normalized it away (node.tag nil),
               # the record keeps it verbatim — it names no class and is
@@ -666,7 +667,7 @@ module Yeptris
             # resolves to String there and psych likewise yields a
             # String (no gate — plain data).
             if gate_ts && type == m::SCALAR && flat[i + 3] == m::TAG_TIMESTAMP
-              resolved = m.parse_timestamp(arena[flat[i + 8], flat[i + 9]])
+              resolved = m.parse_timestamp(arena.byteslice(flat[i + 8], flat[i + 9]))
               klass = resolved.class
               if (klass == ::Date || klass == ::Time) && !permitted.include?(klass)
                 raise DisallowedClass, klass.name
