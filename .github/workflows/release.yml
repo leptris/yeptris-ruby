@@ -242,7 +242,12 @@ jobs:
           mkdir -p "$RUNNER_TEMP/pgem"
           git clone --quiet "$(git remote get-url origin)" "$RUNNER_TEMP/pgem/yeptris-ruby"
           LOCKSTEP="$(git -C "$RUNNER_TEMP/pgem/yeptris-ruby" tag -l "v${{ needs.bump.outputs.version }}" | sort -V | tail -1 || true)"
-          test -n "$LOCKSTEP" || { echo "lockstep tag not visible yet"; exit 0; }
+          # 0.6.66.0 shipped a stale x86_64 binary because this guard
+          # silently skipped the fresh-engine build (leptris#2038): the
+          # per-minor steps then fell back to the stale vendor path.
+          # A release whose lockstep tag is not visible must FAIL, not
+          # ship gems built from an older engine.
+          test -n "$LOCKSTEP" || { echo "::error::lockstep tag v${{ needs.bump.outputs.version }} not visible — refusing to build gems without the fresh engine (the 0.6.66.0 stale-binary class)"; exit 1; }
           git -C "$RUNNER_TEMP/pgem/yeptris-ruby" checkout --quiet "$LOCKSTEP"
           git clone --quiet --depth 1 --branch "v${{ needs.bump.outputs.c_semver }}" \
             https://github.com/leptris/yeptris "$RUNNER_TEMP/pgem/yeptris-c"
@@ -298,7 +303,12 @@ jobs:
           git clone --quiet "$(git remote get-url origin)" "$RUNNER_TEMP/pgem/yeptris-ruby"
           cd "$RUNNER_TEMP/pgem/yeptris-ruby"
           LOCKSTEP="$(git tag -l "v${{ needs.bump.outputs.version }}" | sort -V | tail -1 || true)"
-          test -n "$LOCKSTEP" || { echo "lockstep tag not visible yet"; exit 0; }
+          # 0.6.66.0 shipped a stale x86_64 binary because this guard
+          # silently skipped the fresh-engine build (leptris#2038): the
+          # per-minor steps then fell back to the stale vendor path.
+          # A release whose lockstep tag is not visible must FAIL, not
+          # ship gems built from an older engine.
+          test -n "$LOCKSTEP" || { echo "::error::lockstep tag v${{ needs.bump.outputs.version }} not visible — refusing to build gems without the fresh engine (the 0.6.66.0 stale-binary class)"; exit 1; }
           git checkout --quiet "$LOCKSTEP"
           echo "YEP_RUBYREPO=$RUNNER_TEMP/pgem/yeptris-ruby" >> "$GITHUB_ENV"
           # the engine, so the per-minor extconf links a real libyeptris
