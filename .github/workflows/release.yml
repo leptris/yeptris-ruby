@@ -156,7 +156,10 @@ jobs:
             echo "pr state: $S"
             case "$S" in
               CLEAN) break ;;
-              BLOCKED|UNKNOWN) sleep 30 ;;
+              # UNSTABLE = mergeable with a non-required check pending or
+              # flapping (burned the 0.6.66 train); BEHIND clears once the
+              # rebase-merge target settles. Both are wait-and-repoll.
+              BLOCKED|UNKNOWN|UNSTABLE|BEHIND) sleep 30 ;;
               *) echo "::error::release PR is $S"; exit 1 ;;
             esac
           done
