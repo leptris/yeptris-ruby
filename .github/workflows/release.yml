@@ -263,6 +263,12 @@ jobs:
             echo "YEPTRIS_SRC=$RUNNER_TEMP/pgem/yeptris-c/src"
           } >> "$GITHUB_ENV"
 
+      # ruby#399: the SSOT for this loop is SUPPORTED_MINORS (repo
+      # root). GHA steps are static, so each minor stays a literal
+      # pair here — but the packaging step below runs the build script
+      # with YEPTRIS_REQUIRE_FULL_MINOR_SET=1, which fails this leg
+      # the moment SUPPORTED_MINORS carries a minor without a matching
+      # pair added here. Grow both together.
       - name: Per-minor native 3.3 (non-Windows)
         if: runner.os != 'Windows'
         uses: ruby/setup-ruby@master
@@ -366,6 +372,11 @@ jobs:
 
       - name: Build the platform gem
         shell: bash
+        env:
+          # ruby#399: the script refuses to package unless the
+          # pre-seeded clone carries every SUPPORTED_MINORS bundle —
+          # the per-minor steps above stage them
+          YEPTRIS_REQUIRE_FULL_MINOR_SET: '1'
         run: |
           # RubyGems 3.6 stamps a versionless darwin platform to the
           # LOCAL kernel at package time; 4.x packages it as declared.
@@ -403,18 +414,69 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build the musl platform gem (Alpine container)
+      # ruby#399: ONE shared workspace for the whole leg. The engine
+      # builds here first (it is Ruby-independent), the per-minor loop
+      # compiles every SUPPORTED_MINORS bundle against it, and the
+      # packaging run reuses both (YEPTRIS_KEEP_ENGINE_BUILD) instead
+      # of rebuilding the engine. A single-ruby packaging container
+      # alone shipped exactly one bundle — 0.6.73.0's musl gems carried
+      # 3.4 only and every Ruby 3.3/4.0 musl host silently ran FFI.
+      - name: Pre-seed the workspace clone + engine (Alpine container)
         shell: bash
         run: |
+          set -euxo pipefail
           mkdir -p "$RUNNER_TEMP/pgem"
-          # /bnd is THIS run's checkout, mounted in — an in-container
-          # `git clone --branch v$VERSION` has raced the freshly pushed
-          # tag before (the 0.6.51.0 train's musl legs built with the
-          # pre-BUILD_TESTING script off a stale ref)
-          docker run --rm -v "$RUNNER_TEMP/pgem:/pgem" -v "$GITHUB_WORKSPACE:/bnd" -e V="${{ needs.bump.outputs.c_semver }}" \
+          # the clone rides the bump sha (not a fresh `git clone
+          # --branch v$V`): the freshly pushed tag has raced in-container
+          # clones before (the 0.6.51.0 train's musl legs built off a
+          # stale ref). The packaging script re-checks-out the lockstep
+          # tag inside this same clone — content-identical to the sha.
+          docker run --rm -v "$RUNNER_TEMP/pgem:/pgem" \
+            -e V="${{ needs.bump.outputs.c_semver }}" \
+            -e SHA="${{ needs.bump.outputs.sha }}" \
             ruby:3.4-alpine sh -c '
             set -eux
             apk add --no-cache build-base bash git cmake ninja
+            git clone --quiet -c core.autocrlf=false -c core.eol=lf https://github.com/leptris/yeptris-ruby /pgem/yeptris-ruby
+            git -C /pgem/yeptris-ruby checkout --quiet "$SHA"
+            git clone --quiet -c core.autocrlf=false -c core.eol=lf --depth 1 --branch "v$V" https://github.com/leptris/yeptris /pgem/yeptris-c
+            cmake -B /pgem/yeptris-c/build -S /pgem/yeptris-c -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+              -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+            cmake --build /pgem/yeptris-c/build
+          '
+
+      - name: Build the per-minor bundles (Alpine containers)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # ruby#399: the minor list is SUPPORTED_MINORS (the repo
+          # SSOT) — never a literal here.
+          for minor in $(cat SUPPORTED_MINORS); do
+            docker run --rm -v "$RUNNER_TEMP/pgem:/pgem" \
+              "ruby:${minor}-alpine" sh -c '
+              set -eux
+              apk add --no-cache build-base bash git make
+              cd /pgem/yeptris-ruby
+              YEPTRIS_LIB_PATH=/pgem/yeptris-c/build/src/libyeptris.so \
+              YEPTRIS_SRC=/pgem/yeptris-c/src \
+              ruby ext/build_windows_native.rb
+            '
+          done
+
+      - name: Build the musl platform gem (Alpine container)
+        shell: bash
+        run: |
+          docker run --rm -v "$RUNNER_TEMP/pgem:/pgem" -v "$GITHUB_WORKSPACE:/bnd" \
+            -e V="${{ needs.bump.outputs.c_semver }}" \
+            -e YEPTRIS_KEEP_ENGINE_BUILD=1 \
+            -e YEPTRIS_REQUIRE_FULL_MINOR_SET=1 \
+            ruby:3.4-alpine sh -c '
+            set -eux
+            apk add --no-cache build-base bash git cmake ninja
+            # ruby#399: the script reuses the prebuilt engine above and
+            # refuses to package unless every SUPPORTED_MINORS bundle
+            # is staged in the shared clone
             bash /bnd/scripts/build-platform-gem.sh "$V" https://github.com/leptris/yeptris-ruby /pgem
           '
 
@@ -460,6 +522,7 @@ jobs:
             image: ruby:3.4-bookworm
             platform: linux/arm/v7
             setup: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential git cmake ninja-build
+            # no minors field = the SUPPORTED_MINORS default (ruby#399)
           - name: arm-linux-musl
             image: ruby:3.4-alpine
             platform: linux/arm/v7
@@ -468,14 +531,18 @@ jobs:
             image: ruby:3.4-bookworm
             platform: linux/ppc64le
             setup: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential git cmake ninja-build
-          # ruby 3.3+ dropped the s390x variant from the official image
+          # ruby 3.3+ dropped the s390x variant from the official
+          # BOOKWORM image — the leg keeps the 3.2 floor, declared
+          # here (ruby#399)
           - name: s390x-linux
             image: ruby:3.2-bookworm
             platform: linux/s390x
             setup: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential git cmake ninja-build
+            minors: '3.2'
           # riscv64: NO official ruby image ships the variant at all, so
           # the leg rides debian's distro ruby (trixie = ruby 3.3) — the
-          # s390x 3.2 pin pattern taken one step further. RubyGems.org
+          # s390x 3.2 pin pattern taken one step further, floor declared
+          # here (ruby#399). RubyGems.org
           # hosts the platform (sass-embedded ships riscv64-linux-{gnu,musl});
           # trixie's rubygems stamps riscv64-linux-gnu (rehearsed), which
           # glibc rubies match and musl skips to the source gem — the same
@@ -485,21 +552,104 @@ jobs:
             image: debian:trixie
             platform: linux/riscv64
             setup: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential git ruby-full ruby-dev cmake ninja-build ca-certificates
+            minors: '3.3'
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
 
-      - name: Build the ${{ matrix.name }} platform gem
+      # ruby#399: ONE shared workspace per leg. The engine builds here
+      # first (Ruby-independent), the per-minor loop compiles every
+      # declared minor's bundle against it, and the packaging run
+      # reuses both (YEPTRIS_KEEP_ENGINE_BUILD) instead of rebuilding
+      # the engine — in TCG emulation that build is the bulk of the
+      # leg's wall clock. A single-image packaging run shipped exactly
+      # one bundle (0.6.73.0's armhf/ppc64le gems carried their matrix
+      # image's minor only).
+      - name: Pre-seed the ${{ matrix.name }} workspace (emulated container)
         shell: bash
         run: |
+          set -euxo pipefail
           mkdir -p "$RUNNER_TEMP/pgem-${{ matrix.name }}"
-          # /bnd is THIS run's checkout, mounted in — same stale-tag race
-          # as the musl leg
+          # the clone rides the bump sha (not a fresh `git clone
+          # --branch v$V`): the freshly pushed tag has raced in-container
+          # clones before — same stale-tag race as the musl leg. The
+          # packaging script re-checks-out the lockstep tag inside this
+          # same clone — content-identical to the sha.
           docker run --rm --platform "${{ matrix.platform }}" \
             -v "$RUNNER_TEMP:/work" -v "$GITHUB_WORKSPACE:/bnd" -w /work \
+            -e V="${{ needs.bump.outputs.c_semver }}" \
+            -e SHA="${{ needs.bump.outputs.sha }}" \
             "${{ matrix.image }}" sh -c '
             set -eux
             ${{ matrix.setup }}
+            git clone --quiet -c core.autocrlf=false -c core.eol=lf https://github.com/leptris/yeptris-ruby "/work/pgem-${{ matrix.name }}/yeptris-ruby"
+            git -C "/work/pgem-${{ matrix.name }}/yeptris-ruby" checkout --quiet "$SHA"
+            git clone --quiet -c core.autocrlf=false -c core.eol=lf --depth 1 --branch "v$V" https://github.com/leptris/yeptris "/work/pgem-${{ matrix.name }}/yeptris-c"
+            cmake -B "/work/pgem-${{ matrix.name }}/yeptris-c/build" -S "/work/pgem-${{ matrix.name }}/yeptris-c" -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+              -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+            cmake --build "/work/pgem-${{ matrix.name }}/yeptris-c/build"
+          '
+
+      # ruby#399: per-minor bundles on EVERY leg — the matrix image
+      # alone pins one minor, whose bundle left every other supported
+      # Ruby on that platform on the FFI ladder. One image per minor
+      # compiles the per-minor bundle (stdlib + toolchain, no bundle
+      # install), family derived from the matrix image.
+      - name: Build the per-minor bundles (emulated containers)
+        shell: bash
+        env:
+          DECLARED_MINORS: ${{ matrix.minors }}
+        run: |
+          set -euo pipefail
+          # ruby#399: the default minor list is SUPPORTED_MINORS (the
+          # repo SSOT) — never a literal here. Floor-limited legs
+          # declare their subset in the matrix (s390x 3.2 — bookworm
+          # dropped the variant after 3.2; riscv64 3.3 — distro ruby).
+          MINORS="${DECLARED_MINORS:-$(cat SUPPORTED_MINORS)}"
+          WS="/work/pgem-${{ matrix.name }}"
+          for minor in $MINORS; do
+            case "${{ matrix.image }}" in
+              *alpine*)
+                img="ruby:${minor}-alpine"
+                setup="apk add --no-cache build-base bash git make"
+                ;;
+              debian:*)
+                img="${{ matrix.image }}"
+                setup="${{ matrix.setup }}"
+                ;;
+              *)
+                img="ruby:${minor}-bookworm"
+                setup="apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential git"
+                ;;
+            esac
+            docker run --rm --platform "${{ matrix.platform }}" \
+              -v "$RUNNER_TEMP:/work" -w /work \
+              "$img" sh -c "
+              set -eux
+              $setup
+              cd $WS/yeptris-ruby
+              YEPTRIS_LIB_PATH=$WS/yeptris-c/build/src/libyeptris.so \
+              YEPTRIS_SRC=$WS/yeptris-c/src \
+              ruby ext/build_windows_native.rb
+            "
+          done
+
+      - name: Build the ${{ matrix.name }} platform gem
+        shell: bash
+        run: |
+          docker run --rm --platform "${{ matrix.platform }}" \
+            -v "$RUNNER_TEMP:/work" -v "$GITHUB_WORKSPACE:/bnd" -w /work \
+            -e YEPTRIS_KEEP_ENGINE_BUILD=1 \
+            -e YEPTRIS_REQUIRE_FULL_MINOR_SET=1 \
+            -e YEPTRIS_EXPECTED_MINORS="${{ matrix.minors }}" \
+            "${{ matrix.image }}" sh -c '
+            set -eux
+            ${{ matrix.setup }}
+            # ruby#399: the script reuses the prebuilt engine above and
+            # refuses to package unless every declared minor bundle is
+            # staged in the shared clone (empty YEPTRIS_EXPECTED_MINORS
+            # means the full SUPPORTED_MINORS set)
             bash /bnd/scripts/build-platform-gem.sh "${{ needs.bump.outputs.c_semver }}" https://github.com/leptris/yeptris-ruby "/work/pgem-${{ matrix.name }}"
           '
 
@@ -643,6 +793,57 @@ jobs:
             }
           done
           echo "Ruby sources byte-identical across $valid variants"
+
+      # ruby#399 publication gate: EVERY linux platform variant must
+      # carry the complete per-minor native set (SUPPORTED_MINORS, the
+      # repo SSOT) before anything is pushed — a missing minor is a
+      # silent FFI degradation on that Ruby (0.6.73.0 shipped musl +
+      # arm gems with 3.4 only, locking Ruby 3.3/4.0 hosts on those
+      # platforms onto FFI). Floor-limited platforms carry their
+      # documented matrix subset: s390x (official bookworm images stop
+      # at 3.2) and riscv64 (no bookworm variant; the trixie distro
+      # ruby is 3.3). darwin/mingw variants and the ruby platform are
+      # not gated here.
+      - name: Verify per-minor native completeness (linux variants)
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          rc=0
+          checked=0
+          for gem in pkg/**/*.gem; do
+            name=$(basename "$gem" .gem)
+            case "$name" in
+              *linux*) ;;
+              *) continue ;;
+            esac
+            case "$name" in
+              *s390x*)   expected="3.2" ;;
+              *riscv64*) expected="3.3" ;;
+              *)         expected="$(cat SUPPORTED_MINORS)" ;;
+            esac
+            rm -rf /tmp/pm && mkdir -p /tmp/pm
+            tar xf "$gem" -C /tmp/pm data.tar.gz
+            tar xzf /tmp/pm/data.tar.gz -C /tmp/pm
+            missing=""
+            for m in $expected; do
+              [ -f "/tmp/pm/lib/yeptris/$m/native.so" ] || missing="$missing $m"
+            done
+            if [ -n "$missing" ]; then
+              echo "::error::$name missing per-minor bundles:$missing (ruby#399)"
+              rc=1
+            else
+              echo "$name: per-minor set complete [$expected]"
+              checked=$((checked + 1))
+            fi
+          done
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::incomplete per-minor sets block publication (ruby#399)"
+          fi
+          if [ "$checked" -lt 1 ]; then
+            echo "::error::no linux platform gem found to gate (ruby#399)"
+            rc=1
+          fi
+          exit $rc
 
       - name: Configure RubyGems credentials (Trusted Publishing / OIDC)
         uses: rubygems/configure-rubygems-credentials@dc5a8d8553e6ee01fc26761a49e99e733d17954a # v2.1.0

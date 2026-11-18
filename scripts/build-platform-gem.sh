@@ -21,11 +21,35 @@ echo "::group::Build libyeptris v$V"
 # prebuilds) is reused as-is — but its BUILD DIR carries the prebuild
 # step's generator choice (Visual Studio), and configuring here with
 # Ninja trips CMake's cache guard. Build dirs are disposable: wipe.
-if [ ! -d "$WORK/yeptris-c/.git" ]; then
-  git clone --quiet -c core.autocrlf=false -c core.eol=lf --depth 1 --branch "v$V" https://github.com/leptris/yeptris "$WORK/yeptris-c"
+#
+# ruby#399: the container legs prebuild the engine ONCE in the shared
+# workspace before the per-minor bundle loop, and YEPTRIS_KEEP_
+# ENGINE_BUILD=1 makes this run reuse that build dir instead of
+# wiping and rebuilding it. The reuse is same-generator by
+# construction (the prebuild ran the same Ninja/default line below —
+# the VS cache-guard dance is a Windows prebuild, and the Windows
+# legs never set the flag), and in qemu emulation an engine build is
+# the bulk of a leg's wall clock.
+LIB=""
+if [ "${YEPTRIS_KEEP_ENGINE_BUILD:-}" = "1" ]; then
+  for cand in "$WORK/yeptris-c/build/src/libyeptris.so" \
+              "$WORK/yeptris-c/build/src/libyeptris.dylib" \
+              "$WORK/yeptris-c/build/bin/Release/yeptris.dll" \
+              "$WORK/yeptris-c/build/src/Release/yeptris.dll" \
+              "$WORK/yeptris-c/build/src/yeptris.dll"; do
+    if [ -f "$cand" ]; then
+      LIB="$cand"
+      break
+    fi
+  done
+  [ -n "$LIB" ] || echo "YEPTRIS_KEEP_ENGINE_BUILD=1 but no prebuilt engine under $WORK/yeptris-c/build — building it" >&2
 fi
-rm -rf "$WORK/yeptris-c/build"
-if [ "$IS_WINDOWS" = "1" ] && [ "$(ruby -e 'print Gem::Platform.local.to_s' 2>/dev/null)" = "x64-mingw32" ]; then
+if [ -z "$LIB" ]; then
+  if [ ! -d "$WORK/yeptris-c/.git" ]; then
+    git clone --quiet -c core.autocrlf=false -c core.eol=lf --depth 1 --branch "v$V" https://github.com/leptris/yeptris "$WORK/yeptris-c"
+  fi
+  rm -rf "$WORK/yeptris-c/build"
+  if [ "$IS_WINDOWS" = "1" ] && [ "$(ruby -e 'print Gem::Platform.local.to_s' 2>/dev/null)" = "x64-mingw32" ]; then
   # Ruby <= 3.0 (x64-mingw32, the msvcrt ABI): the RubyInstaller
   # mingw-w64 toolchain — gcc via Ninja; gcc keeps the lib prefix and
   # stages under src/ directly, so the MSVC name dances do not apply
@@ -81,6 +105,7 @@ else
   cmake --build "$WORK/yeptris-c/build"
   LIB="$WORK/yeptris-c/build/src/libyeptris.so"
   [ -f "$LIB" ] || LIB="$WORK/yeptris-c/build/src/libyeptris.dylib"
+fi
 fi
 echo "lib: $LIB"
 echo "::endgroup::"
@@ -201,6 +226,27 @@ else
   MINOR="$(ruby -e 'print RUBY_VERSION[/\A\d+\.\d+/]')"
   mkdir -p "lib/yeptris/$MINOR"
   cp "ext/yeptris_native/$EXT" "lib/yeptris/$MINOR/$EXT"
+  # ruby#399 publication contract: the gem tree must carry the
+  # complete per-minor bundle set before packaging — a missing minor
+  # silently locks that Ruby's hosts onto the FFI ladder (0.6.73.0's
+  # musl/arm gems shipped 3.4 only). CI legs set YEPTRIS_REQUIRE_
+  # FULL_MINOR_SET=1; an ad-hoc single-minor dev build leaves it unset
+  # and keeps the old behavior. YEPTRIS_EXPECTED_MINORS narrows the
+  # requirement for floor-limited platforms (s390x 3.2 / riscv64 3.3 —
+  # the official images stop there); unset means the full SSOT.
+  if [ "${YEPTRIS_REQUIRE_FULL_MINOR_SET:-}" = "1" ]; then
+    SSOT="$(cd "$(dirname "$0")/.." && pwd)/SUPPORTED_MINORS"
+    expected="${YEPTRIS_EXPECTED_MINORS:-$(cat "$SSOT")}"
+    missing=""
+    for m in $expected; do
+      [ -f "lib/yeptris/$m/$EXT" ] || missing="$missing $m"
+    done
+    if [ -n "$missing" ]; then
+      echo "ERROR: incomplete per-minor set — missing:$missing (expected lib/yeptris/<minor>/$EXT for:$expected; ruby#399)" >&2
+      exit 1
+    fi
+    echo "per-minor set complete: $expected"
+  fi
 fi
 # macOS: publish VERSIONLESS (arm64-darwin, no kernel suffix) — the
 # -23 form only matched the build runner's exact darwin, so Tahoe
