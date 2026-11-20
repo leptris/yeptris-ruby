@@ -96,8 +96,35 @@ RSpec.describe "Yeptris::Psych co-existence (issue #69)" do
     raise "load broken" unless Psych.load("a: 1") == { "a" => 1 }
   RUBY
 
+  # The windows-runner boot (observed 2026-11-20, run 44698420284)
+  # seeds ::Psych with a bare module before the drop-in loads — the
+  # rebind captured it as ORIGINAL and the VERSION read exploded with
+  # NameError at require time. This pins the VERSION-less-ORIGINAL
+  # shape on every platform: the drop-in must load and rebind cleanly,
+  # and report a shape-valid VERSION wherever the environment resolves
+  # one (a bundler-pruned child index may legitimately resolve none).
+  bare_psych_boot = <<~'RUBY'
+    module ::Psych; end
+    require "yeptris/psych/drop_in"
+    raise "not rebound" unless ::Psych.equal?(Yeptris::Psych)
+    raise "load broken" unless Psych.load("a: 1") == { "a" => 1 }
+    raise "VERSION bad" if defined?(Psych::VERSION) &&
+                           !Psych::VERSION.to_s.match?(/\A\d+\.\d+\.\d+/)
+  RUBY
+
   def run_script(lib, code)
     system(Gem.ruby, "-I", lib, "-e", code)
+  end
+
+  # The VERSION fallback needs a psych gem spec to report; the 3.0
+  # vendored bundle resolves none (version_spec's skip, same shape).
+  def psych_spec_resolvable?
+    ::Gem.loaded_specs["psych"] ||
+      (begin
+         ::Gem::Specification.find_by_name("psych", ::Gem::Requirement.default)
+       rescue ::StandardError, ::Gem::Exception, ::LoadError
+         nil
+       end)
   end
 
   it "coexists when stdlib psych loads AFTER yeptris/psych" do
@@ -110,6 +137,12 @@ RSpec.describe "Yeptris::Psych co-existence (issue #69)" do
 
   it "still rebinds when the drop-in is explicitly requested" do
     expect(run_script(lib, drop_in_check)).to be(true)
+  end
+
+  it "tolerates a bare VERSION-less ::Psych seeded by the boot" do
+    skip "no psych gem spec resolvable in this bundle (the 3.0 vendored bundle)" if
+      psych_spec_resolvable?.nil?
+    expect(run_script(lib, bare_psych_boot)).to be(true)
   end
 end
 
