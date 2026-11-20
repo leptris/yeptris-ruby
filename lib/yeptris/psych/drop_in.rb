@@ -27,9 +27,19 @@ Object.class_eval { remove_const(:Psych) } if defined?(::Psych) && !::Psych.equa
 # face reports the STDLIB version it replaces: ORIGINAL's when psych
 # was preloaded, else the default-gem spec's version (local lookup —
 # requiring stdlib psych post-rebind is censored by the header).
+# ORIGINAL is guarded before the read: the ::Psych captured by the
+# rebind can sit WITHOUT a VERSION constant — the windows CI children
+# hit a boot that defines the name first with a bare module (the
+# bundler-setup boot path on the runner), and the blind ORIGINAL
+# read raised NameError at drop-in require time (run 44698420284,
+# psych_compat_spec:111 + psych/version_spec:15). A VERSION-less
+# ORIGINAL reports through the same default-gem spec lookup the
+# not-preloaded path uses — the honest version for the psych the
+# boot had half-formed.
 unless Yeptris::Psych.const_defined?(:VERSION, false)
   version =
-    if Yeptris::Psych.const_defined?(:ORIGINAL, false)
+    if Yeptris::Psych.const_defined?(:ORIGINAL, false) &&
+       Yeptris::Psych::ORIGINAL.const_defined?(:VERSION)
       Yeptris::Psych::ORIGINAL::VERSION
     else
       spec = begin
