@@ -1,0 +1,81 @@
+name: probe-win-psych
+
+on:
+  push:
+    branches: [probe/win-psych]
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout binding
+        uses: actions/checkout@v4
+
+      - name: Checkout libyeptris
+        uses: actions/checkout@v4
+        with:
+          repository: leptris/yeptris
+          path: libyeptris-src
+
+      - name: Build shared library
+        shell: bash
+        run: |
+          cmake -B libyeptris-src/build -S libyeptris-src \
+            -DYEPTRIS_BUILD_TESTING=OFF \
+            -DYEPTRIS_BUILD_CLI=OFF -DYEPTRIS_BUILD_SHARED=ON
+          cmake --build libyeptris-src/build --config Release
+          DLL="$( (ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null || true) | head -1)"
+          test -n "$DLL"
+          cp "$DLL" "$GITHUB_WORKSPACE/libyeptris.dll"
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - name: Probe
+        shell: bash
+        env:
+          YEPTRIS_LIB_PATH: ${{ github.workspace }}/libyeptris.dll
+          BUNDLE_GEMFILE: ${{ github.workspace }}/Gemfile
+        run: |
+          ruby -v
+          echo "bundler: $(bundle -v)"
+          gem install bundler -v 4.0.24 --install-dir "$HOME/b40" --no-document
+          B40="$HOME/b40/gems/bundler-4.0.24/lib/bundler/setup.rb"
+          test -f "$B40"
+
+          echo "=== A: bare boot — Psych pre-defined? ==="
+          ruby -I lib -e 'puts "defined?(::Psych) = #{defined?(::Psych).inspect}"'
+
+          echo "=== B: bundler/setup 4.1.0 via RUBYOPT ==="
+          RUBYOPT="-rbundler/setup" ruby -I lib -e 'puts "defined?(::Psych) = #{defined?(::Psych).inspect}; loaded_specs=#{::Gem.loaded_specs["psych"]&.full_name.inspect}; features=#{$LOADED_FEATURES.grep(/psych/i).reject { |f| f.include?("yeptris") }.inspect}"'
+
+          echo "=== B2: bundler/setup 4.0.24 via RUBYOPT ==="
+          RUBYOPT="-r$B40" ruby -I lib -e 'puts "defined?(::Psych) = #{defined?(::Psych).inspect}; loaded_specs=#{::Gem.loaded_specs["psych"]&.full_name.inspect}; features=#{$LOADED_FEATURES.grep(/psych/i).reject { |f| f.include?("yeptris") }.inspect}"'
+
+          echo "=== C: the yeptris require chain, bundler 4.1.0 ==="
+          cat > /tmp/child.rb <<'RB'
+          puts "RUBYOPT=#{ENV['RUBYOPT'].inspect}"
+          require "yeptris/psych"
+          puts "face loaded; ::Psych defined? #{defined?(::Psych).inspect}"
+          if defined?(::Psych)
+            puts "name=#{::Psych.name} class=#{::Psych.class}"
+            puts "consts=#{::Psych.constants.inspect}"
+            puts "orig_module_is_yeptris=#{::Psych.equal?(Yeptris::Psych)}"
+            puts "features=#{$LOADED_FEATURES.grep(/psych/i).reject { |f| f.include?('yeptris') }.inspect}"
+            puts "loaded_spec=#{::Gem.loaded_specs['psych']&.full_name.inspect}"
+          end
+          RB
+          RUBYOPT="-rbundler/setup" ruby -I lib /tmp/child.rb; echo "exit=$?"
+
+          echo "=== C2: the yeptris require chain, bundler 4.0.24 ==="
+          RUBYOPT="-r$B40" ruby -I lib /tmp/child.rb; echo "exit=$?"
+
+          echo "=== D: failing drop-in child verbatim, bundler 4.1.0 ==="
+          RUBYOPT="-rbundler/setup" ruby -I lib -e 'require "yeptris/psych/drop_in"; puts "VER=#{Psych::VERSION}"'; echo "exit=$?"
+
+          echo "=== D2: failing drop-in child verbatim, bundler 4.0.24 ==="
+          RUBYOPT="-r$B40" ruby -I lib -e 'require "yeptris/psych/drop_in"; puts "VER=#{Psych::VERSION}"'; echo "exit=$?"
