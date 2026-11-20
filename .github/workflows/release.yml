@@ -387,6 +387,70 @@ jobs:
           bash scripts/build-platform-gem.sh "${{ needs.bump.outputs.c_semver }}" \
             "$(git remote get-url origin)" "$RUNNER_TEMP/pgem"
 
+      # The gnu glibc-floor gate (#404, the leptris-ruby#2109 class): a
+      # build-env refresh silently re-binds newer GLIBC symbol versions
+      # — #2109 was a runner refresh moving the gnu gems from green to
+      # pthread-merge 2.34 binds (gem install succeeds; every older
+      # host LoadErrors at first use). Assert the PACKAGED gem's max
+      # GLIBC symbol version against the documented floors — measured
+      # on the published artifacts (0.6.74.0/0.6.75.0) and the glibc
+      # port history they reflect:
+      #   libyeptris.so:                 x86_64 2.14 (the memcpy bump —
+      #     "loads everywhere nokogiri does"), aarch64 2.17 (the
+      #     port's baseline; aarch64 support landed in glibc 2.17)
+      #   lib/yeptris/<minor>/native.so: 2.17 on both (clock_gettime
+      #     moved librt->libc at 2.17; every supported Ruby minor
+      #     needs 2.17+ itself, so a higher bind would silently drop
+      #     those hosts onto the FFI ladder)
+      # One flat 2.14 floor would fail today's clean aarch64 artifact
+      # (its memcpy IS 2.17) — the floor is per-arch port history, not
+      # one number. The qemu gnu legs are image-pinned instead
+      # (bookworm/trixie declared in the build-qemu matrix); musl
+      # carries no GLIBC version strings at all.
+      - name: Gate the gnu glibc floor (the packaged gem's every .so)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$RUNNER_TEMP/pgem/gempath" || { echo "no platform gem this run"; exit 0; }
+          GEM="$(cut -d= -f2 "$RUNNER_TEMP/pgem/gempath")"
+          command -v strings >/dev/null || { echo "::error::binutils/strings missing on this runner"; exit 1; }
+          # the engine floor is per-arch glibc port history, not one number
+          case "$(uname -m)" in
+            x86_64)  ENGINE_FLOOR=14 ;;
+            aarch64) ENGINE_FLOOR=17 ;;
+            *) echo "::error::declare the libyeptris.so glibc floor for $(uname -m) (yeptris-ruby #404)"; exit 1 ;;
+          esac
+          NATIVE_FLOOR=17
+          rm -rf /tmp/gate-glibc && mkdir -p /tmp/gate-glibc
+          # a .gem's OUTER container is a plain POSIX tar, not gzip
+          tar xf "$GEM" -C /tmp/gate-glibc data.tar.gz
+          tar xzf /tmp/gate-glibc/data.tar.gz -C /tmp/gate-glibc
+          rc=0
+          n_engine=0
+          n_native=0
+          while IFS= read -r so; do
+            max=$(strings "$so" | grep -oE 'GLIBC_2\.[0-9]+' | sort -uV | tail -1 || true)
+            case "$so" in
+              */native.so) floor=$NATIVE_FLOOR; n_native=$((n_native + 1)) ;;
+              *)           floor=$ENGINE_FLOOR; n_engine=$((n_engine + 1)) ;;
+            esac
+            if [ -z "$max" ]; then
+              echo "::error::$so carries no GLIBC version strings — not a gnu ELF (yeptris-ruby #404)"
+              rc=1
+            elif [ "${max#GLIBC_2.}" -le "$floor" ]; then
+              echo "$so: $max <= 2.$floor OK"
+            else
+              echo "::error::$so binds $max; the documented floor is 2.$floor (yeptris-ruby #404, the leptris-ruby #2109 class)"
+              rc=1
+            fi
+          done < <(find /tmp/gate-glibc -name '*.so')
+          if [ "$n_engine" -lt 1 ] || [ "$n_native" -lt 1 ]; then
+            echo "::error::gate found no libyeptris.so / per-minor native.so in the gem (yeptris-ruby #404)"
+            rc=1
+          fi
+          exit $rc
+
       - name: Smoke the platform gem
         shell: bash
         run: |
