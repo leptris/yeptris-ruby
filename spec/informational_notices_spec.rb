@@ -16,7 +16,7 @@ RSpec.describe "informational notices (yeptris-ruby#217)" do
   # suite state; the subprocess must reproduce just the lib path)
   let(:lib_path) do
     ENV["YEPTRIS_LIB_PATH"] ||
-      Dir[File.expand_path("../lib/platform/*/libyeptris.*", __dir__)].first ||
+      Dir[File.expand_path("../lib/yeptris/vendor/*/libyeptris.*", __dir__)].first ||
       begin
         sibling = File.expand_path("../../yeptris/build-validate/src/libyeptris.dylib", __dir__)
         File.exist?(sibling) ? sibling : nil

@@ -278,7 +278,7 @@ jobs:
       - name: Build native 3.3 (non-Windows)
         if: runner.os != 'Windows'
         shell: bash
-        run: cd "$YEP_RUBYREPO" && ruby ext/build_windows_native.rb
+        run: cd "$YEP_RUBYREPO" && ruby ext/build_native_per_minor.rb
       - name: Per-minor native 3.4 (non-Windows)
         if: runner.os != 'Windows'
         uses: ruby/setup-ruby@master
@@ -288,7 +288,7 @@ jobs:
       - name: Build native 3.4 (non-Windows)
         if: runner.os != 'Windows'
         shell: bash
-        run: cd "$YEP_RUBYREPO" && ruby ext/build_windows_native.rb
+        run: cd "$YEP_RUBYREPO" && ruby ext/build_native_per_minor.rb
       - name: Per-minor native 4.0 (non-Windows)
         if: runner.os != 'Windows'
         uses: ruby/setup-ruby@master
@@ -298,7 +298,7 @@ jobs:
       - name: Build native 4.0 (non-Windows)
         if: runner.os != 'Windows'
         shell: bash
-        run: cd "$YEP_RUBYREPO" && ruby ext/build_windows_native.rb
+        run: cd "$YEP_RUBYREPO" && ruby ext/build_native_per_minor.rb
 
       - name: Build the per-minor native DLLs (Windows)
         if: runner.os == 'Windows'
@@ -342,7 +342,7 @@ jobs:
       - name: Build native DLL 3.3
         if: runner.os == 'Windows' && (matrix.ruby-version || '3.3') != '3.3' && (matrix.ruby-version || '3.3') != '3.0' && matrix.os != 'windows-11-arm'
         shell: bash
-        run: cd "$YEP_RUBYREPO" && ruby ext/build_windows_native.rb
+        run: cd "$YEP_RUBYREPO" && ruby ext/build_native_per_minor.rb
       - name: Per-minor native DLL 3.4 (Windows)
         if: runner.os == 'Windows' && (matrix.ruby-version || '3.3') != '3.4' && (matrix.ruby-version || '3.3') != '3.0'
         uses: ruby/setup-ruby@master
@@ -353,7 +353,7 @@ jobs:
       - name: Build native DLL 3.4
         if: runner.os == 'Windows' && (matrix.ruby-version || '3.3') != '3.4' && (matrix.ruby-version || '3.3') != '3.0'
         shell: bash
-        run: cd "$YEP_RUBYREPO" && ruby ext/build_windows_native.rb
+        run: cd "$YEP_RUBYREPO" && ruby ext/build_native_per_minor.rb
       - name: Per-minor native DLL 4.0 (Windows)
         if: runner.os == 'Windows' && (matrix.ruby-version || '3.3') != '4.0' && (matrix.ruby-version || '3.3') != '3.0'
         uses: ruby/setup-ruby@master
@@ -364,7 +364,7 @@ jobs:
       - name: Build native DLL 4.0
         if: runner.os == 'Windows' && (matrix.ruby-version || '3.3') != '4.0' && (matrix.ruby-version || '3.3') != '3.0'
         shell: bash
-        run: cd "$YEP_RUBYREPO" && ruby ext/build_windows_native.rb
+        run: cd "$YEP_RUBYREPO" && ruby ext/build_native_per_minor.rb
 
       - uses: ruby/setup-ruby@master
         with:
@@ -398,7 +398,7 @@ jobs:
       #   libyeptris.so:                 x86_64 2.14 (the memcpy bump —
       #     "loads everywhere nokogiri does"), aarch64 2.17 (the
       #     port's baseline; aarch64 support landed in glibc 2.17)
-      #   lib/yeptris/<minor>/native.so: 2.17 on both (clock_gettime
+      #   lib/yeptris/native_<minor>.so: 2.17 on both (clock_gettime
       #     moved librt->libc at 2.17; every supported Ruby minor
       #     needs 2.17+ itself, so a higher bind would silently drop
       #     those hosts onto the FFI ladder)
@@ -432,7 +432,7 @@ jobs:
           while IFS= read -r so; do
             max=$(strings "$so" | grep -oE 'GLIBC_2\.[0-9]+' | sort -uV | tail -1 || true)
             case "$so" in
-              */native.so) floor=$NATIVE_FLOOR; n_native=$((n_native + 1)) ;;
+              */native_*.so) floor=$NATIVE_FLOOR; n_native=$((n_native + 1)) ;;
               *)           floor=$ENGINE_FLOOR; n_engine=$((n_engine + 1)) ;;
             esac
             if [ -z "$max" ]; then
@@ -446,7 +446,7 @@ jobs:
             fi
           done < <(find /tmp/gate-glibc -name '*.so')
           if [ "$n_engine" -lt 1 ] || [ "$n_native" -lt 1 ]; then
-            echo "::error::gate found no libyeptris.so / per-minor native.so in the gem (yeptris-ruby #404)"
+            echo "::error::gate found no libyeptris.so / per-minor native_*.so in the gem (yeptris-ruby #404)"
             rc=1
           fi
           exit $rc
@@ -524,7 +524,7 @@ jobs:
               cd /pgem/yeptris-ruby
               YEPTRIS_LIB_PATH=/pgem/yeptris-c/build/src/libyeptris.so \
               YEPTRIS_SRC=/pgem/yeptris-c/src \
-              ruby ext/build_windows_native.rb
+              ruby ext/build_native_per_minor.rb
             '
           done
 
@@ -695,7 +695,7 @@ jobs:
               cd $WS/yeptris-ruby
               YEPTRIS_LIB_PATH=$WS/yeptris-c/build/src/libyeptris.so \
               YEPTRIS_SRC=$WS/yeptris-c/src \
-              ruby ext/build_windows_native.rb
+              ruby ext/build_native_per_minor.rb
             "
           done
 
@@ -890,7 +890,10 @@ jobs:
             tar xzf /tmp/pm/data.tar.gz -C /tmp/pm
             missing=""
             for m in $expected; do
-              [ -f "/tmp/pm/lib/yeptris/$m/native.so" ] || missing="$missing $m"
+              # the DOT-FREE per-minor name (the org native-layer
+              # contract clause 2): 3.4 -> native_3_4.so
+              m_us=$(printf '%s' "$m" | tr "." "_")
+              [ -f "/tmp/pm/lib/yeptris/native_${m_us}.so" ] || missing="$missing $m"
             done
             if [ -n "$missing" ]; then
               echo "::error::$name missing per-minor bundles:$missing (ruby#399)"

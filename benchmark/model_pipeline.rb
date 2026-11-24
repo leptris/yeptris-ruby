@@ -11,7 +11,7 @@
 #   ruby benchmark/model_pipeline.rb --one-shot  # fresh-process medians
 
 lib = ENV["YEPTRIS_LIB_PATH"] ||
-      Dir[File.expand_path("../lib/platform/*/libyeptris.*", __dir__)].first
+      Dir[File.expand_path("../lib/yeptris/vendor/*/libyeptris.*", __dir__)].first
 if lib.nil?
   sibling = File.expand_path("../../yeptris/build-shared/src/libyeptris.dylib", __dir__)
   lib = sibling if File.exist?(sibling)

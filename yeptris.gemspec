@@ -35,24 +35,24 @@ Gem::Specification.new do |spec|
   spec.homepage = "https://github.com/leptris/yeptris"
   spec.license = "MIT"
 
-  # libyeptris rides EVERY artifact: platform gems vendor the prebuilt
-  # shared lib at the gem root, and the pure `ruby`-platform gem
-  # carries the C sources under vendor/ + an extension that builds
-  # them at install time (no-op when a prebuilt lib is present).
+  # libyeptris rides EVERY artifact (the org native-layer contract,
+  # leptris-ruby#671 clause 3): platform gems vendor the prebuilt
+  # shared lib in the vendor tree (lib/yeptris/vendor/<platform>/;
+  # windows: flat lib/) plus one DOT-FREE per-minor materializer
+  # bundle, and the pure `ruby`-platform gem carries the C sources
+  # under vendor/ + extensions that build them at install time (the
+  # engine lands flat lib/, the bundle at its per-minor name).
   spec.files = Dir["lib/**/*.rb"] + Dir["lib/**/*.{so,dylib,dll,bundle}"] +
-               Dir["*.{so,dylib}"] + Dir["ext/**/*.{c,h,rb}"] +
+               Dir["ext/**/*.{c,h,rb}"] +
                Dir["vendor/libyeptris/**/*"].select { |f| File.file?(f) } +
                %w[README.adoc]
   # The PURE gem builds the whole engine at install (libyeptris from
-  # vendor/, then the native materializer against it). PLATFORM gems
-  # vendor the prebuilt engine binary and build ONLY the materializer
-  # Platform gems ship the prebuilt native lane (the build script
-  # stages lib/yeptris/<minor>/native.so) and register NO install-time
-  # extension — toolchain-free installs (the alpine musl smoke has no
-  # make; the 627509b law, #317: the #311 no-op assumption was wrong,
-  # extconf ABORTS without a compiler). The pure gem builds both
-  # extconfs at install. The platform-gem script stages
-  # .yeptris-platform-gem as the marker.
+  # vendor/ into flat lib/, then the native materializer against it).
+  # PLATFORM gems vendor the prebuilt engine binary and register NO
+  # install-time extension — toolchain-free installs (the alpine musl
+  # smoke has no make; the 627509b law, #317: the #311 no-op
+  # assumption was wrong, extconf ABORTS without a compiler). The
+  # platform-gem script stages .yeptris-platform-gem as the marker.
   spec.extensions =
     if File.exist?(File.expand_path(".yeptris-platform-gem", __dir__))
       []

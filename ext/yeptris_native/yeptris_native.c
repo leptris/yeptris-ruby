@@ -465,6 +465,20 @@ static void native_self_check(void) {
     }
 }
 
+/* The per-minor init symbols (the org native-layer contract
+ * clause 2): the DOT-FREE bundle name native_<major>_<minor>
+ * makes MRI dlsym Init_native_<minor> from the basename cut at
+ * the first dot. mkmf generates its own .def/exports listing
+ * just Init_native, so the per-minor entries are exported here
+ * (RUBY_FUNC_EXPORTED) and all route through the one
+ * Init_native body — the moxml double-load lesson: two gems'
+ * copies in one process re-running setup must stay idempotent,
+ * which the AVAILABLE guard below already guarantees. */
+RUBY_FUNC_EXPORTED void Init_native_3_2(void);
+RUBY_FUNC_EXPORTED void Init_native_3_3(void);
+RUBY_FUNC_EXPORTED void Init_native_3_4(void);
+RUBY_FUNC_EXPORTED void Init_native_4_0(void);
+RUBY_FUNC_EXPORTED void Init_native_4_1(void);
 RUBY_FUNC_EXPORTED void Init_native(void) {
     utf8_enc = rb_utf8_encoding();
     native_self_check();
@@ -505,3 +519,19 @@ RUBY_FUNC_EXPORTED void Init_native(void) {
     const char* shape = getenv("YEPTRIS_NATIVE_SHAPE");
     if (shape != NULL && strcmp(shape, "natural") == 0) yep_rb_set_shape_mode(1);
 }
+/* The per-minor init entries (the org native-layer contract
+ * clause 2): the DOT-FREE bundle name native_<major>_<minor>
+ * makes MRI dlsym Init_native_<minor> from the basename cut at
+ * the first dot. mkmf generates its own exports listing just
+ * Init_native, so the per-minor entries are exported here and
+ * all route through the one Init_native body — whose AVAILABLE
+ * guard keeps a second init (two gems' copies in one process,
+ * the #336 class) idempotent. The set covers SUPPORTED_MINORS
+ * (3.3/3.4/4.0) plus the s390x 3.2 floor and one minor of
+ * headroom; a minor outside the set raises the friendly
+ * fallback warning instead. */
+RUBY_FUNC_EXPORTED void Init_native_3_2(void) { Init_native(); }
+RUBY_FUNC_EXPORTED void Init_native_3_3(void) { Init_native(); }
+RUBY_FUNC_EXPORTED void Init_native_3_4(void) { Init_native(); }
+RUBY_FUNC_EXPORTED void Init_native_4_0(void) { Init_native(); }
+RUBY_FUNC_EXPORTED void Init_native_4_1(void) { Init_native(); }

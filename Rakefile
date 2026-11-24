@@ -17,13 +17,13 @@ def platform_tag
 end
 
 namespace :vendor do
-  desc "Copy the locally built libyeptris into lib/ for this platform"
+  desc "Copy the locally built libyeptris into the canonical vendor tree (lib/yeptris/vendor/<platform>/)"
   task :local do
     lib = ENV["YEPTRIS_LIB_PATH"]
     raise "set YEPTRIS_LIB_PATH to the built library" unless lib
 
     ext = File.extname(lib)
-    dest = File.join("lib", "platform", platform_tag, "libyeptris#{ext}")
+    dest = File.join("lib", "yeptris", "vendor", platform_tag, "libyeptris#{ext}")
     FileUtils.mkdir_p(File.dirname(dest))
     FileUtils.cp(lib, dest)
     puts "vendored #{lib} -> #{dest}"
@@ -33,7 +33,7 @@ end
 namespace :audit do
   desc "Verify every ffi.rb attach has an exported symbol in the built library"
   task :symbols do
-    lib = Dir["lib/platform/*/libyeptris.*", ENV["YEPTRIS_LIB_PATH"]].compact.first
+    lib = Dir["lib/yeptris/vendor/*/libyeptris.*", ENV["YEPTRIS_LIB_PATH"]].compact.first
     raise "no library found (rake vendor:local or set YEPTRIS_LIB_PATH)" unless lib
 
     require "set"

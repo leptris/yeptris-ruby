@@ -106,12 +106,16 @@ benchmark of record — any performance claim runs through it.
 ....
 cd ext/yeptris_native
 YEPTRIS_LIB_PATH=/path/to/libyeptris.dylib ruby extconf.rb && make
-cp native.bundle ../../lib/yeptris/   # or .so on Linux
+cp native_<major>_<minor>.bundle ../../lib/yeptris/   # or .so on Linux
 ....
 
-`require "yeptris"` picks it up automatically (`Yeptris::JSON` then
-uses it; missing builds silently use the fallback — the gem installs
-without compiling).
+The bundle name is DOT-FREE per Ruby minor (`native_4_0.bundle` —
+MRI derives the init symbol `Init_native_4_0` from the basename cut
+at the first dot). `require "yeptris"` picks its own minor's bundle
+up automatically (`Yeptris::JSON` then uses it); a missing build
+falls back to the FFI ladder — the gem installs without compiling,
+and a bundle built by any other minor is never attempted (the
+wrong-ABI guard).
 
 == Shipped beyond the original plan
 

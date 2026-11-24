@@ -2,8 +2,9 @@
 
 # Builds the vendored libyeptris at gem-install time so EVERY install
 # carries the engine (the pure `ruby`-platform gem has no prebuilt
-# binary). Platform gems vendor the prebuilt lib at the gem root —
-# when one is present this extension no-ops.
+# binary). Platform gems vendor the prebuilt lib in the vendor tree
+# (lib/yeptris/vendor/<platform>/) — when one is present this
+# extension no-ops.
 
 require "mkmf"
 require "fileutils"
@@ -11,8 +12,13 @@ require "fileutils"
 gem_root = File.expand_path("../..", __dir__)
 vendored = File.join(gem_root, "vendor", "libyeptris")
 
-prebuilt = ["libyeptris.so", "libyeptris.dylib", "libyeptris.dll",
-            "yeptris.dll"].any? { |n| File.exist?(File.join(gem_root, n)) }
+# the prebuilt probes ride the loader's candidate layouts (the org
+# native-layer contract clause 1): the platform gems' vendor tree,
+# then the flat lib/ spelling
+prebuilt = Dir[File.join(gem_root, "lib", "yeptris", "vendor", "*", "libyeptris.*")] +
+           %w[libyeptris.so libyeptris.dylib libyeptris.dll]
+             .map { |n| File.join(gem_root, "lib", n) }
+prebuilt = prebuilt.any? { |f| File.exist?(f) }
 
 def write_dummy_makefile(reason)
   File.write("Makefile", <<~MAKE)
@@ -31,7 +37,8 @@ elsif find_executable("cmake").nil?
   write_dummy_makefile("yeptris: cmake not found; set YEPTRIS_LIB_PATH at require time")
 else
   # Out-of-source into the ext workdir; the shared lib then moves to
-  # the GEM ROOT, where ffi.rb's ladder probes it.
+  # the flat lib/ layout (contract clause 1.3), where ffi.rb's
+  # candidate list probes it.
   build = File.join(Dir.pwd, "libyeptris-build")
   # BUILD_TESTING (the CMake standard) gates test/ — the vendored
   # tree ships no test dir; the static target must build because the
@@ -47,7 +54,8 @@ else
        system("cmake", "--build", build, "--config", "Release")
   lib = Dir.glob(File.join(build, "**", "libyeptris.{so,dylib}")).first
   if ok && lib
-    FileUtils.cp(lib, File.join(gem_root, File.basename(lib)))
+    FileUtils.mkdir_p(File.join(gem_root, "lib"))
+    FileUtils.cp(lib, File.join(gem_root, "lib", File.basename(lib)))
     write_dummy_makefile("yeptris: built vendored libyeptris at gem install")
   else
     # a failed build must not abort the install — require-time raises
