@@ -99,6 +99,11 @@ RSpec.describe "the native-layer contract" do
 
     it "maps the qemu-adjacent platforms" do
       expect(plats("armv7l-linux")).to eq(%w[arm-linux arm-linux-musl])
+      # a real CRuby on POWER reports powerpc64le (RbConfig host_cpu);
+      # the gem vendor tier is the platform spelling ppc64le-linux —
+      # both spellings resolve (run 45407198542's ppc64le leg: the []
+      # lookup shipped no vendor tree)
+      expect(plats("powerpc64le-linux")).to eq(%w[ppc64le-linux])
       expect(plats("ppc64le-linux")).to eq(%w[ppc64le-linux])
       expect(plats("s390x-linux")).to eq(%w[s390x-linux s390x-linux-musl])
       expect(plats("riscv64-linux-gnu")).to eq(%w[riscv64-linux])
