@@ -33,10 +33,16 @@ RSpec.describe "the native-layer contract (leptris-ruby#671)" do
 
       expect(candidates[0]).to eq("/contract/env-first/libyeptris.dylib")
       # the vendored tree: lib/yeptris/vendor/<platform>/, the running
-      # arch first, glibc before musl on linux
-      expect(candidates[1]).to include("/lib/yeptris/vendor/")
+      # arch first, glibc before musl on linux — no vendor tree on
+      # windows (the DLL vendors at the gem root, the contract's flat
+      # slot)
       vendor = candidates.grep(%r{/vendor/.+/libyeptris})
-      expect(vendor).not_to be_empty
+      if Gem.win_platform?
+        expect(vendor).to be_empty
+      else
+        expect(candidates[1]).to include("/lib/yeptris/vendor/")
+        expect(vendor).not_to be_empty
+      end
       linux_order = vendor.grep(/linux/).map { |c| c[%r{vendor/([^/]+)/}m, 1] }
       expect(linux_order).to eq(linux_order & %w[aarch64-linux x86_64-linux
                                                 aarch64-linux-musl
