@@ -16,8 +16,11 @@ RSpec.describe "scripts/gem-smoke.rb" do
     # Open3 with an env hash: the bash env-prefix form is not
     # command syntax on Windows cmd.
     require "open3"
+    # ENV.to_h.merge: ENV#merge itself is Ruby 3.3+ — the suite floor
+    # is older, and there ENV is a plain Object (the universal forms).
+    child_env = ENV.to_h.merge("YEPTRIS_SMOKE_REPO_LIB" => "1")
     out, status = Open3.capture2(
-      ENV.merge("YEPTRIS_SMOKE_REPO_LIB" => "1"),
+      child_env,
       RbConfig.ruby, "scripts/gem-smoke.rb", Yeptris::VERSION.to_s
     )
     out = out.to_s
