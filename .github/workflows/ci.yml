@@ -126,8 +126,16 @@ jobs:
         run: |
           if [ "$(uname -s)" = "Darwin" ]; then
             export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.dylib"
+            # the per-minor native bundle (#409) links libyeptris; the
+            # smoke subprocess's MRI require dlopens it through the
+            # SYSTEM loader, which does not read YEPTRIS_LIB_PATH —
+            # give the loader the build dir too (the repo-lib smoke is
+            # the dev scenario; platform gems vendor the engine
+            # beside the bundle).
+            export DYLD_LIBRARY_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src:${DYLD_LIBRARY_PATH:-}"
           elif [ "$(uname -s)" = "Linux" ]; then
             export YEPTRIS_LIB_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src/libyeptris.so"
+            export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/libyeptris-src/build/src:${LD_LIBRARY_PATH:-}"
           else
             export YEPTRIS_LIB_PATH="$YEPTRIS_LIB"
           fi
