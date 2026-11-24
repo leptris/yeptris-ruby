@@ -235,6 +235,11 @@ if [ "$IS_WINDOWS" = "1" ]; then
   mkdir -p lib
   cp "$LIB" lib/libyeptris.dll
 else
+  # the platform string for diagnostics: RUBY_PLATFORM is a Ruby
+  # constant, never a shell variable — referencing it under set -u
+  # kills the leg with "unbound variable" instead of the diagnostic
+  # (run 45407198542's ppc64le leg)
+  RUBY_PLATFORM_S="$(ruby -e 'print RUBY_PLATFORM')"
   VENDOR_DIR="$(ruby -Ilib -ryeptris/native_layout -e '
     dirs = Yeptris::NativeLayout.vendor_platforms_for(RUBY_PLATFORM)
     # the build'"'"'s own libc family stages into its OWN dir (the
@@ -244,7 +249,7 @@ else
     dir = RUBY_PLATFORM.include?("musl") ? (dirs.find { |d| d.include?("musl") } || dirs.first) : dirs.first
     print dir.to_s
   ')"
-  [ -n "$VENDOR_DIR" ] || { echo "ERROR: no vendor tree spelling for RUBY_PLATFORM=${RUBY_PLATFORM} (the gem would ship an unreachable binary)" >&2; exit 1; }
+  [ -n "$VENDOR_DIR" ] || { echo "ERROR: no vendor tree spelling for RUBY_PLATFORM=${RUBY_PLATFORM_S} (the gem would ship an unreachable binary)" >&2; exit 1; }
   mkdir -p "lib/yeptris/vendor/$VENDOR_DIR"
   cp "$LIB" "lib/yeptris/vendor/$VENDOR_DIR/$(basename "$LIB")"
   echo "vendored engine -> lib/yeptris/vendor/$VENDOR_DIR/$(basename "$LIB")"

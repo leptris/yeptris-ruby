@@ -38,8 +38,15 @@ module Yeptris
       # "armeb-linux", ...). Never matches aarch64 ("aarch" has
       # no "arm" substring).
       when /arm.*linux/ then %w[arm-linux arm-linux-musl]
-      # POWER8+ little-endian and IBM Z (qemu-built platform gems)
+      # POWER8+ little-endian and IBM Z (qemu-built platform gems).
+      # A real CRuby reports powerpc64le (RbConfig host_cpu), the gem
+      # vendor tier is the platform spelling ppc64le-linux — both
+      # spellings must resolve or the gem stages no vendor tree (the
+      # run 45407198542 ppc64le leg's "RUBY_PLATFORM: unbound
+      # variable" — the [] lookup fell into the diagnostic, which set
+      # -u then killed on the unset shell var)
       when /ppc64le.*linux/ then %w[ppc64le-linux]
+      when /powerpc64le.*linux/ then %w[ppc64le-linux]
       when /s390x.*linux/ then %w[s390x-linux s390x-linux-musl]
       # the trixie distro-ruby leg (no musl ruby image ships the port)
       when /riscv64.*linux/ then %w[riscv64-linux]
