@@ -13,8 +13,15 @@ RSpec.describe "scripts/gem-smoke.rb" do
     # diagnostic and continues on the FFI ladder (the PLATFORM-gem
     # face keeps the hard shipped-but-loaded gate). The diagnostic
     # is asserted so the require-error detail never rots silent.
-    out = `YEPTRIS_SMOKE_REPO_LIB=1 #{RbConfig.ruby} scripts/gem-smoke.rb #{Yeptris::VERSION} 2>&1`
-    expect($?).to be_success, out
+    # Open3 with an env hash: the bash env-prefix form is not
+    # command syntax on Windows cmd.
+    require "open3"
+    out, status = Open3.capture2(
+      ENV.merge("YEPTRIS_SMOKE_REPO_LIB" => "1"),
+      RbConfig.ruby, "scripts/gem-smoke.rb", Yeptris::VERSION.to_s
+    )
+    out = out.to_s
+    expect(status).to be_success, out
     expect(out).to include("SMOKE PASS yeptris #{Yeptris::VERSION}")
     expect(out).to match(%r{smoke: native_\d+_\d+ present but not loaded \(.+\)}m)
       .or include("native+ffi")
