@@ -20,9 +20,16 @@ RSpec.describe "the native-layer contract (leptris-ruby#671)" do
 
   describe "the FFI candidate order (clause 1)" do
     it "runs ENV, the vendored tree, the gem-root flat layout, system, and the linker — in that order" do
+      # probe with the pin, then RESTORE it — later specs' subprocesses
+      # inherit this env (the spec_helper pin is load-bearing)
+      saved = ENV["YEPTRIS_LIB_PATH"]
       ENV["YEPTRIS_LIB_PATH"] = "/contract/env-first/libyeptris.dylib"
       candidates = Yeptris::FFI.libleptris_candidates
-      ENV.delete("YEPTRIS_LIB_PATH")
+      if saved
+        ENV["YEPTRIS_LIB_PATH"] = saved
+      else
+        ENV.delete("YEPTRIS_LIB_PATH")
+      end
 
       expect(candidates[0]).to eq("/contract/env-first/libyeptris.dylib")
       # the vendored tree: lib/yeptris/vendor/<platform>/, the running
