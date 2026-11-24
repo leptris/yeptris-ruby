@@ -474,6 +474,8 @@ static void native_self_check(void) {
  * Init_native body — the moxml double-load lesson: two gems'
  * copies in one process re-running setup must stay idempotent,
  * which the AVAILABLE guard below already guarantees. */
+RUBY_FUNC_EXPORTED void Init_native_3_0(void);
+RUBY_FUNC_EXPORTED void Init_native_3_1(void);
 RUBY_FUNC_EXPORTED void Init_native_3_2(void);
 RUBY_FUNC_EXPORTED void Init_native_3_3(void);
 RUBY_FUNC_EXPORTED void Init_native_3_4(void);
@@ -529,7 +531,13 @@ RUBY_FUNC_EXPORTED void Init_native(void) {
  * the #336 class) idempotent. The set covers SUPPORTED_MINORS
  * (3.3/3.4/4.0) plus the s390x 3.2 floor and one minor of
  * headroom; a minor outside the set raises the friendly
- * fallback warning instead. */
+ * fallback warning instead. 3.0/3.1 ride along for the
+ * windows mingw 3.0 leg — its mkmf generates a .def listing
+ * Init_native_3_0 from the target name, and ld refuses to
+ * export a symbol the object does not define ("cannot export
+ * Init_native_3_0: symbol not defined", run 45397564333). */
+RUBY_FUNC_EXPORTED void Init_native_3_0(void) { Init_native(); }
+RUBY_FUNC_EXPORTED void Init_native_3_1(void) { Init_native(); }
 RUBY_FUNC_EXPORTED void Init_native_3_2(void) { Init_native(); }
 RUBY_FUNC_EXPORTED void Init_native_3_3(void) { Init_native(); }
 RUBY_FUNC_EXPORTED void Init_native_3_4(void) { Init_native(); }

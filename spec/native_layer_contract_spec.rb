@@ -153,6 +153,63 @@ RSpec.describe "the native-layer contract" do
     end
   end
 
+  describe "the packaging pipeline pin (extconf -> script -> loader)" do
+    # run 45397564333's failure class: the extension built its per-minor
+    # bundle fine and every packaging leg still died at "no ext bundle
+    # native_<minor>.<ext>" — the script checked a repo-root-relative
+    # path while its CWD was still ext/yeptris_native, and the windows
+    # block asked for a .dll mkmf never emits (its windows bundle is
+    # .so, DLEXT). The pipeline's name derivations (extconf target,
+    # script stage path, loader feature) must agree, the script's CWD
+    # must be the repo root before its existence checks, and the ext
+    # must export Init_native_<minor> for every minor a leg can name.
+
+    let(:extconf) { File.read(File.expand_path("../ext/yeptris_native/extconf.rb", __dir__)) }
+    let(:script) { File.read(File.expand_path("../scripts/build-platform-gem.sh", __dir__)) }
+    let(:ext_src) { File.read(File.expand_path("../ext/yeptris_native/yeptris_native.c", __dir__)) }
+    let(:supported_minors) { File.read(File.expand_path("../SUPPORTED_MINORS", __dir__)).split }
+
+    it "derives the extconf target minor exactly like NativeLayout" do
+      # mkmf's target name IS the staged file name and the Init_ symbol
+      expect(extconf).to include('minor = RUBY_VERSION[/\A\d+\.\d+/].tr(".", "_")')
+      expect(extconf).to include('create_makefile("yeptris/native_#{minor}")')
+      expect(File.read(File.expand_path("../lib/yeptris/native_layout.rb", __dir__)))
+        .to include('version[/\A\d+\.\d+/].tr(".", "_")')
+    end
+
+    it "stages the bundle flat at lib/yeptris/ (contract clause 2)" do
+      expect(script).to include('cp "ext/yeptris_native/$EXT" "lib/yeptris/$EXT"')
+    end
+
+    it "checks the ext bundle from the repo root (cd BEFORE the existence gate)" do
+      group_i = script.index("::group::Stage and build the platform gem")
+      gate_i = script.index("ERROR: no ext bundle", group_i)
+      cd_i = script.index('cd "$WORK/yeptris-ruby"', group_i)
+      expect(gate_i).to be > group_i
+      expect(cd_i).to be > group_i
+      expect(cd_i).to be < gate_i
+    end
+
+    it "stages the windows bundle under the mkmf-emitted name (no hardcoded .dll)" do
+      expect(script).not_to include('BUNDLE="native_${MINOR_US}.dll"')
+      expect(script).to include('BUNDLE="$ARTIFACT"')
+    end
+
+    it "exports Init_native_<minor> for every SUPPORTED_MINORS member" do
+      supported_minors.each do |m|
+        m_us = m.tr(".", "_")
+        expect(ext_src).to include("void Init_native_#{m_us}(void) { Init_native(); }")
+      end
+    end
+
+    it "exports the windows mingw 3.0 leg's Init_native_3_0" do
+      # mkmf generates the leg's .def from the target name; an export
+      # the object does not define is an ld error ("cannot export
+      # Init_native_3_0: symbol not defined")
+      expect(ext_src).to include("void Init_native_3_0(void) { Init_native(); }")
+    end
+  end
+
   describe "no unversioned fallback, ever" do
     it "never requires the unversioned yeptris/native feature" do
       # violation case: a version-agnostic native.so loads under ANY
