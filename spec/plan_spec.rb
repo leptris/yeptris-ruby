@@ -108,6 +108,20 @@ RSpec.describe Yeptris::Plan do
       doc.free
     end
 
+    it "survives the document being freed before the strs read" do
+      plan = described_class.compile(spec)
+      doc = Yeptris::Document.parse(yaml)
+
+      result = doc.plan_walk(plan)
+      doc.free # the eager str pass already materialized the views
+
+      expect(result.strs(1)).to eq(%w[a b])
+      expect(result.ints(0)).to eq([1, 2])
+
+      result.free
+      plan.free
+    end
+
     it "raises Plan::Error when the document shape disagrees" do
       plan = described_class.compile(
         { "kind" => "map", "path" => "rows",

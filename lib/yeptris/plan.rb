@@ -66,24 +66,37 @@ module Yeptris
 
     # The typed columnar result of one walk. Accessors read the C
     # result lazily and CACHE the materialized Ruby arrays; the result
-    # borrows the walked source for string columns (the source and —
-    # DOM leg — the document are retained here, so the borrow cannot
-    # dangle while the result lives). #free releases the C handle;
-    # use after free raises, and a result left to GC still frees (the
-    # Document finalizer pattern).
+    # borrows the walked source for the tape leg's string spans (the
+    # source is retained here, so the borrow cannot dangle while the
+    # result lives). The DOM leg's string columns are (ptr,len) views
+    # INTO the document — they MATERIALIZE EAGERLY at walk time (the
+    # document may be freed while the result lives; a view would
+    # dangle). #free releases the C handle; use after free raises, and
+    # a result left to GC still frees (the Document finalizer
+    # pattern).
     class PlanColumns
       # Shared between the instance and its GC finalizer (Procs close
       # over variables by reference — the Document pattern).
       Freed = Struct.new(:flag)
 
-      # @api private — minted by the walk faces
-      def initialize(c_ptr, src: nil, doc: nil)
+      # @api private — minted by the walk faces (+plan+ only on the
+      # DOM leg, where the eager str pass needs the column count)
+      def initialize(c_ptr, src: nil, doc: nil, plan: nil)
         @c_ptr = c_ptr
         @src = src
         @doc = doc
         @freed = Freed.new(false)
         @cache = {}
         ObjectSpace.define_finalizer(self, self.class.finalize(c_ptr, @freed))
+        # the eager str pass (the DOM borrow law): read every str
+        # column NOW, while the document is certainly alive
+        return unless @doc && plan
+
+        plan.column_count.times do |col|
+          next unless column_kind(col) == :str
+
+          read_str_column(col)
+        end
       end
 
       def self.finalize(ptr, freed)
@@ -290,7 +303,7 @@ module Yeptris
               "disagrees with the plan"
       end
 
-      PlanColumns.new(raw, doc: doc)
+      PlanColumns.new(raw, doc: doc, plan: plan)
     end
   end
 end
