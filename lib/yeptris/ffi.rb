@@ -9,22 +9,67 @@ module Yeptris
   module FFI
     extend ::FFI::Library
 
-    begin
-      ffi_lib [
+    # The per-OS vendor directory of the platform gem (the org
+    # native-layer contract, leptris-ruby#671 clause 1.2): engine
+    # binaries under lib/yeptris/vendor/<platform>/. Returns [] on
+    # gems without the vendor tree (the source gem) and on windows
+    # (the DLL is gem-local flat, candidate clause 1.3). The mapping
+    # itself lives in NativeLayout — the SSOT the packaging script and
+    # the CI gates consume too.
+    def self.vendor_platforms_for(ruby_platform)
+      NativeLayout.vendor_platforms_for(ruby_platform)
+    end
+
+    def self.vendor_dirs
+      NativeLayout.vendor_platforms_for(RUBY_PLATFORM)
+        .map { |d| File.expand_path("../yeptris/vendor/#{d}", __dir__) }
+        .select { |dir| File.directory?(dir) }
+    end
+
+    # THE libyeptris candidate list, in order — the org native-layer
+    # contract clause 1. Single source of truth: every face that
+    # loads the library resolves through this list, and the native
+    # materializer bundle rides the image it picked. Two
+    # differently-pathed copies load as two images with split
+    # per-document state — never resolve through a second list.
+    def self.lib_candidates
+      [
         ENV["YEPTRIS_LIB_PATH"],
-        File.expand_path("../../libyeptris.dylib", __dir__),
-        File.expand_path("../../libyeptris.so", __dir__),
-        File.expand_path("../../libyeptris.dll", __dir__),
+        *vendor_dirs.flat_map { |d|
+          %w[libyeptris.dylib libyeptris.so libyeptris.dll]
+            .map { |n| File.join(d, n) }
+        },
+        # the flat lib/ layout (contract clause 1.3)
+        File.expand_path("../libyeptris.dylib", __dir__),
+        File.expand_path("../libyeptris.so", __dir__),
+        File.expand_path("../libyeptris.dll", __dir__),
         "/usr/local/lib/libyeptris.dylib",
         "/usr/local/lib/libyeptris.so",
         "yeptris",
       ].compact
+    end
+
+    begin
+      ffi_lib lib_candidates
     rescue LoadError => e
+      # the named-remedy law (contract clause 1): never a bare
+      # LoadError — name the installed variant and the command that
+      # fixes it
       raise LoadError, <<~MSG
         yeptris: cannot load the libyeptris library.
-        Set YEPTRIS_LIB_PATH to a libyeptris.{so,dylib,dll}, or vendor
-        the library next to the gem's lib/ directory.
-        (Underlying error: #{e.message})
+
+        You may have installed the ruby-platform variant of this gem
+        (#{begin
+          Gem.loaded_specs["yeptris"]&.full_name
+        rescue StandardError
+          "unknown"
+        end}), which does not vendor the native library. Fix one of:
+
+          gem install yeptris --platform <your platform>  # the vendored variant
+          bundle update yeptris                           # force platform gems
+          YEPTRIS_LIB_PATH=/path/to/libyeptris.so         # an explicit library
+
+        Original error: #{e.message}
       MSG
     end
 

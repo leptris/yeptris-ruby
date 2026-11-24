@@ -8,7 +8,7 @@
 RSpec.describe "standalone face requires (#300)" do
   let(:lib_path) do
     ENV["YEPTRIS_LIB_PATH"] ||
-      Dir[File.expand_path("../lib/platform/*/libyeptris.*", __dir__)].first ||
+      Dir[File.expand_path("../lib/yeptris/vendor/*/libyeptris.*", __dir__)].first ||
       File.expand_path("../../yeptris/build-validate/src/libyeptris.dylib", __dir__)
   end
   let(:lib) { File.expand_path("../lib", __dir__) }

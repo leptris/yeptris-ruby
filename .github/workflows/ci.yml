@@ -78,9 +78,9 @@ jobs:
           DLL="$( (ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null || true) | head -1)"
           test -n "$DLL"
           cp "$DLL" "$(dirname "$DLL")/libyeptris.dll"
-          # the ffi ladder's repo-root candidate (../../libyeptris.dll
-          # from lib/yeptris/) — bulletproof against env plumbing
-          cp "$DLL" "$GITHUB_WORKSPACE/libyeptris.dll"
+          # the ffi ladder's flat lib/ candidate (the org native-layer
+          # contract clause 1.3) — bulletproof against env plumbing
+          cp "$DLL" "$GITHUB_WORKSPACE/lib/libyeptris.dll"
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
@@ -110,7 +110,7 @@ jobs:
           export YEPTRIS_SRC="$GITHUB_WORKSPACE/libyeptris-src/src"
           cd ext/yeptris_native
           ruby extconf.rb && make && \
-            { cp native.bundle ../../lib/yeptris/ 2>/dev/null || cp native.so ../../lib/yeptris/; } || \
+            { cp native_*.bundle ../../lib/yeptris/ 2>/dev/null || cp native_*.so ../../lib/yeptris/; } || \
             echo "::warning::the optional native materializer did not build — the FFI ladder carries the load"
 
       # the windows Ractor legs intermittently park past the default
@@ -262,9 +262,9 @@ jobs:
           DLL="$( (ls libyeptris-src/build/src/Release/*.dll libyeptris-src/build/bin/Release/*.dll 2>/dev/null || true) | head -1)"
           test -n "$DLL"
           cp "$DLL" "$(dirname "$DLL")/libyeptris.dll"
-          # the ffi ladder's repo-root candidate (../../libyeptris.dll
-          # from lib/yeptris/) — bulletproof against env plumbing
-          cp "$DLL" "$GITHUB_WORKSPACE/libyeptris.dll"
+          # the ffi ladder's flat lib/ candidate (the org native-layer
+          # contract clause 1.3) — bulletproof against env plumbing
+          cp "$DLL" "$GITHUB_WORKSPACE/lib/libyeptris.dll"
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
@@ -286,7 +286,7 @@ jobs:
           export YEPTRIS_SRC="$GITHUB_WORKSPACE/libyeptris-src/src"
           cd ext/yeptris_native
           ruby extconf.rb && make && \
-            { cp native.bundle ../../lib/yeptris/ 2>/dev/null || cp native.so ../../lib/yeptris/; } || \
+            { cp native_*.bundle ../../lib/yeptris/ 2>/dev/null || cp native_*.so ../../lib/yeptris/; } || \
             echo "::warning::the optional native materializer did not build — the FFI ladder carries the load"
 
       - name: Run the profile
@@ -357,7 +357,7 @@ jobs:
           export YEPTRIS_SRC="$GITHUB_WORKSPACE/libyeptris-src/src"
           cd ext/yeptris_native
           ruby extconf.rb && make && \
-            { cp native.bundle ../../lib/yeptris/ 2>/dev/null || cp native.so ../../lib/yeptris/; } || \
+            { cp native_*.bundle ../../lib/yeptris/ 2>/dev/null || cp native_*.so ../../lib/yeptris/; } || \
             echo "::warning::the optional native materializer did not build — the FFI ladder carries the load"
           cd "$GITHUB_WORKSPACE"
           bundle exec ruby benchmark/cbor_profile.rb 200

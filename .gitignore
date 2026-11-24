@@ -14,6 +14,11 @@ ext/yeptris_native/*.bundle
 ext/yeptris_native/*.bundle.dSYM
 ext/yeptris_native/*.so
 ext/yeptris_native/*.dll
+# the per-minor DOT-FREE staged bundles (dev builds; platform gems
+# package them from the release legs)
 lib/yeptris/native.bundle
 lib/yeptris/native.so
+lib/yeptris/native_*.bundle
+lib/yeptris/native_*.so
+lib/yeptris/native_*.dll
 vendor/
