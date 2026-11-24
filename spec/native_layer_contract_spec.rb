@@ -26,25 +26,33 @@ RSpec.describe "the native-layer contract" do
     end
 
     it "orders env -> vendor tree -> flat lib/ -> system -> soname" do
-      # synthesize a vendor cell for THIS platform so the ordering is
-      # observable (the dir need not carry a loadable binary — the
-      # env override wins long before anything dlopens)
-      platform = Yeptris::FFI.vendor_platforms_for(RUBY_PLATFORM).first
-      vendor_dir = File.expand_path("../lib/yeptris/vendor/#{platform}", __dir__)
-      FileUtils.mkdir_p(vendor_dir)
+      # windows has no vendor tree by contract (the DLL is gem-local
+      # flat): assert the rest of the ladder there
+      windows_host = RbConfig::CONFIG["host_os"] =~ /mingw|mswin|windows/
+      unless windows_host
+        # synthesize a vendor cell for THIS platform so the ordering
+        # is observable (the dir need not carry a loadable binary —
+        # the env override wins long before anything dlopens)
+        platform = Yeptris::FFI.vendor_platforms_for(RUBY_PLATFORM).first
+        vendor_dir = File.expand_path("../lib/yeptris/vendor/#{platform}", __dir__)
+        FileUtils.mkdir_p(vendor_dir)
+      end
       begin
         candidates = Yeptris::FFI.lib_candidates
-        vendor_i = candidates.find_index { |c| c.to_s.include?("/vendor/") }
+        unless windows_host
+          vendor_i = candidates.find_index { |c| c.to_s.include?("/vendor/") }
+          flat_i = candidates.find_index { |c| c.to_s.end_with?("lib/libyeptris.dylib") }
+          expect(vendor_i).to be < flat_i
+        end
         flat_i = candidates.find_index { |c| c.to_s.end_with?("lib/libyeptris.dylib") }
         sys_i = candidates.index("/usr/local/lib/libyeptris.dylib")
 
-        expect(vendor_i).to be < flat_i
         expect(flat_i).to be < sys_i
         expect(candidates.last).to eq("yeptris")
       ensure
         # the fixture cell is the spec's own creation — remove it so
         # a dev checkout gains no stray vendor tree
-        FileUtils.rm_rf(vendor_dir)
+        FileUtils.rm_rf(vendor_dir) unless windows_host
       end
     end
 
@@ -107,8 +115,20 @@ RSpec.describe "the native-layer contract" do
 
     it "rebuilds the java engines' lost cpu-os from RbConfig" do
       dirs = plats("x86_64-java")
-      expect(dirs.length).to eq(1)
-      expect(dirs.first).to match(/-(linux|darwin)\z/)
+      # a windows host has no vendor tree by contract — the rebuild
+      # answers [] there (the .dll is gem-local flat)
+      host_os = RbConfig::CONFIG["host_os"].to_s
+      if host_os =~ /mingw|mswin|windows/
+        expect(dirs).to eq([])
+      else
+        expect(dirs).not_to be_empty
+        # the rebuilt family names the real host os (preferring the
+        # gnu->musl ladder on linux — exactly the host's own mapping)
+        expect(dirs.join(" ")).to match(/-(linux|darwin)(\z| )/)
+        dirs.each do |d|
+          expect(d).to end_with(host_os =~ /darwin/ ? "darwin" : "linux")
+        end
+      end
     end
 
     it "answers nothing for unknown platforms" do
