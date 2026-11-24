@@ -188,17 +188,21 @@ if [ "$IS_WINDOWS" = "1" ]; then
   # workflow builds them under each minor BEFORE this script runs —
   # refuse a Windows gem with none (the loud FFI fallback is per-minor
   # acceptable, never wholesale). DOT-FREE per-minor file names at
-  # lib/yeptris/ (native_<major>_<minor>.dll — the org native-layer
+  # lib/yeptris/ (native_<major>_<minor>.<dlext> — the org native-layer
   # contract clause 2; MRI derives Init_native_3_4 from the basename
-  # cut at the first dot); the packaging Ruby's own minor rides too
-  # (the workflow's per-minor steps cover the OTHERS; this build binds
-  # this Ruby's runtime). find, not ls|wc: pipefail aborts the
-  # assignment when ls matches nothing (the sixth leg run died at the
-  # verify with the gem fully built)
-  MINOR_US=$(ruby -e 'print RUBY_VERSION[/\A\d+\.\d+/].tr(".", "_")')
-  BUNDLE="native_${MINOR_US}.dll"
-  [ -f "$BUNDLE" ] || { echo "ERROR: no ext bundle native_${MINOR_US}.dll built" >&2; exit 1; }
-  cp "$BUNDLE" "../../lib/yeptris/native_${MINOR_US}.dll"
+  # cut at the first dot). mkmf names the Windows bundle
+  # native_<maj>_<min>.so (DLEXT — the RubyInstaller convention
+  # psych.so/json.so ride; DLL content, .so spelling), so the bundle
+  # is the ARTIFACT the extension group's ladder already found — a
+  # hardcoded .dll asked for a file mkmf never emits (run
+  # 45397564333's "no ext bundle native_3_3.dll built"); the packaging
+  # Ruby's own minor rides too (the workflow's per-minor steps cover
+  # the OTHERS; this build binds this Ruby's runtime). find, not
+  # ls|wc: pipefail aborts the assignment when ls matches nothing (the
+  # sixth leg run died at the verify with the gem fully built)
+  BUNDLE="$ARTIFACT"
+  [ -f "$BUNDLE" ] || { echo "ERROR: no ext bundle for native_${MINOR_US} built" >&2; exit 1; }
+  cp "$BUNDLE" "../../lib/yeptris/$BUNDLE"
   echo "::group::Verify Windows native bundles"
   count=$(find ../../lib/yeptris -maxdepth 1 -name 'native_*.*' 2>/dev/null | wc -l)
   if [ "$count" -lt 1 ]; then
@@ -210,11 +214,16 @@ if [ "$IS_WINDOWS" = "1" ]; then
 fi
 
 echo "::group::Stage and build the platform gem"
+# repo root FIRST: the EXT check below is repo-root-relative
+# (ext/yeptris_native/...), and the extension group above leaves the
+# CWD INSIDE ext/yeptris_native — checking before this cd asks for
+# ext/yeptris_native/ext/yeptris_native/<bundle> and fails every leg
+# (run 45397564333's "no ext bundle native_<minor>.bundle")
+cd "$WORK/yeptris-ruby"
 MINOR_US=$(ruby -e 'print RUBY_VERSION[/\A\d+\.\d+/].tr(".", "_")')
 EXT="native_${MINOR_US}.so"
 [ -f "ext/yeptris_native/$EXT" ] || EXT="native_${MINOR_US}.bundle"
 [ -f "ext/yeptris_native/$EXT" ] || { echo "ERROR: no ext bundle $EXT" >&2; exit 1; }
-cd "$WORK/yeptris-ruby"
 # The org native-layer contract clause 3: platform gems = the vendor
 # tree + one bundle per supported minor. The engine binary stages in
 # the vendor tree (lib/yeptris/vendor/<platform>/, the loader's
