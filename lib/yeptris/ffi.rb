@@ -124,6 +124,11 @@ module Yeptris
     end
 
     attach_function :yeptris_parse_json_tape, %i[pointer size_t pointer], :int
+    attach_function :yeptris_parse_json_tape_lenient, %i[pointer size_t pointer], :int
+    # the columns-lazy law (tape.h): when the interleaved records are
+    # the primary storage (the lenient route), consumers reading the
+    # column pointers directly must materialize them once first
+    attach_function :yeptris_tape_columns, [:pointer], :int
     attach_function :yeptris_tape_free, [:pointer], :void
     attach_function :yeptris_tape_convert, %i[pointer size_t size_t pointer pointer], :size_t
 
@@ -552,6 +557,41 @@ module Yeptris
     VALIDATION = !(@missing ||= []).include?(:yeptris_validate) &&
                  !(@missing ||= []).include?(:yeptris_schema_compile) &&
                  !(@missing ||= []).include?(:yeptris_validate_report_at)
+
+    # ---- the streaming faces (events.h; #411, the pull cursor and
+    # the document-at-a-time iterparse) ----
+    # One event with string fields into the owning model's storage:
+    # the puller's arena, valid until the next pull call — the Ruby
+    # face copies at hand-out, nothing borrowed crosses.
+    # ABI-frozen field order (events.h's YeptrisEvent); the C enum is
+    # an int on every ABI we ship.
+    class CEvent < ::FFI::Struct
+      layout :type, :int, :style, :int, :flow, :int, :explicit_marker, :int,
+             :implicit, :int,
+             :value, :pointer, :value_len, :size_t,
+             :anchor, :pointer, :anchor_len, :size_t,
+             :tag, :pointer, :tag_len, :size_t,
+             :line, :uint32, :col, :uint32, :end_line, :uint32, :end_col, :uint32
+    end
+
+    typedef :pointer, :yeptris_pull
+    typedef :pointer, :yeptris_iterparse
+
+    attach_function :yeptris_pull_new, %i[pointer size_t], :yeptris_pull
+    attach_function :yeptris_pull_next, [:yeptris_pull], :pointer
+    # the bulk cursor (the FFI shape): up to max events per call
+    attach_function :yeptris_pull_next_batch, %i[yeptris_pull pointer size_t], :size_t
+    attach_function :yeptris_pull_status, %i[yeptris_pull pointer pointer], :int
+    attach_function :yeptris_pull_free, [:yeptris_pull], :void
+
+    attach_function :yeptris_iterparse_new, %i[pointer size_t], :yeptris_iterparse
+    attach_function :yeptris_iterparse_next, %i[yeptris_iterparse pointer], :pointer
+    attach_function :yeptris_iterparse_status, %i[yeptris_iterparse pointer pointer], :int
+    attach_function :yeptris_iterparse_free, [:yeptris_iterparse], :void
+
+    EVENTS = !(@missing ||= []).include?(:yeptris_pull_new) &&
+             !(@missing ||= []).include?(:yeptris_iterparse_new)
+
 
     # The load-time essentials (the read path + the ownership
     # contract): absent on engines far older than the optional

@@ -56,6 +56,8 @@ module Yeptris
   autoload :Schema, "yeptris/schema"
   autoload :Validation, "yeptris/validation"
   autoload :CBOR, "yeptris/cbor"
+  autoload :Plan, "yeptris/plan"
+  autoload :Events, "yeptris/events"
 end
 
 # NOTE (the #318 poisoned-process class): the Psych error-name aliases
