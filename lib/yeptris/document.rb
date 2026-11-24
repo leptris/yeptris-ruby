@@ -190,6 +190,16 @@ class Yeptris::Document
     wrap_node(Yeptris::FFI.yeptris_document_root(@c_ptr, index))
   end
 
+  # Applies a compiled {Yeptris::Plan} to this document in ONE C
+  # pass (plan.h's DOM leg; yeptris-ruby#411): typed columns out, no
+  # per-node host dispatch. The result borrows this document's
+  # regions for its string columns — the returned PlanColumns
+  # retains the document, and free the RESULT first.
+  def plan_walk(plan)
+    ensure_alive!
+    ::Yeptris::Plan.walk_document(self, plan)
+  end
+
   # Bulk build (TODO.impl/15 phase D): one call raises the whole
   # tree from a flat entry array + blob (see YAML::BulkBuilder).
   def build_entries(entries, count, blob, blob_len)

@@ -23,6 +23,7 @@ module Yeptris
     class ParseError < Error; end
 
     autoload :Descriptor, "yeptris/json/descriptor"
+    autoload :Tape, "yeptris/json/tape"
 
     # json gem 3.0 made duplicate keys an error by DEFAULT; 2.x is
     # last-wins. The parity target is the RESOLVED json gem's own
