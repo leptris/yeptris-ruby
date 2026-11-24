@@ -122,11 +122,15 @@ RSpec.describe "the native-layer contract" do
         expect(dirs).to eq([])
       else
         expect(dirs).not_to be_empty
-        # the rebuilt family names the real host os (preferring the
-        # gnu->musl ladder on linux — exactly the host's own mapping)
-        expect(dirs.join(" ")).to match(/-(linux|darwin)(\z| )/)
+        # the rebuilt family names the real host os — the FULL host
+        # mapping on linux carries the gnu->musl ladder, whose musl
+        # entries end in the "-musl" qualifier, so the os SEGMENT is
+        # the contract (a terminal-suffix assertion would misjudge
+        # "aarch64-linux-musl", the canonical vendor-dir spelling;
+        # no cpu spelling contains "-linux"/"-darwin")
+        segment = host_os =~ /darwin/ ? "darwin" : "linux"
         dirs.each do |d|
-          expect(d).to end_with(host_os =~ /darwin/ ? "darwin" : "linux")
+          expect(d).to match(/-#{segment}/)
         end
       end
     end
