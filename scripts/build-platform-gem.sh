@@ -226,7 +226,15 @@ if [ "$IS_WINDOWS" = "1" ]; then
   mkdir -p lib
   cp "$LIB" lib/libyeptris.dll
 else
-  VENDOR_DIR="$(ruby -Ilib -ryeptris/native_layout -e 'print Yeptris::NativeLayout.vendor_platforms_for(RUBY_PLATFORM).first')"
+  VENDOR_DIR="$(ruby -Ilib -ryeptris/native_layout -e '
+    dirs = Yeptris::NativeLayout.vendor_platforms_for(RUBY_PLATFORM)
+    # the build'"'"'s own libc family stages into its OWN dir (the
+    # leptris-ruby staging: the musl gem packs the musl dir, gnu the
+    # gnu dir) — the loader still probes gnu-before-musl and dlopen
+    # falls through on a musl host
+    dir = RUBY_PLATFORM.include?("musl") ? (dirs.find { |d| d.include?("musl") } || dirs.first) : dirs.first
+    print dir.to_s
+  ')"
   [ -n "$VENDOR_DIR" ] || { echo "ERROR: no vendor tree spelling for RUBY_PLATFORM=${RUBY_PLATFORM} (the gem would ship an unreachable binary)" >&2; exit 1; }
   mkdir -p "lib/yeptris/vendor/$VENDOR_DIR"
   cp "$LIB" "lib/yeptris/vendor/$VENDOR_DIR/$(basename "$LIB")"
