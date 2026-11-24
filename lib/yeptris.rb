@@ -56,6 +56,11 @@ module Yeptris
   autoload :Schema, "yeptris/schema"
   autoload :Validation, "yeptris/validation"
   autoload :CBOR, "yeptris/cbor"
+  # the events face (yeptris-ruby#411): the pull cursor, the
+  # document-at-a-time iterator, and the event value class — one file
+  autoload :Event, "yeptris/events"
+  autoload :PullParser, "yeptris/events"
+  autoload :Iterparse, "yeptris/events"
 end
 
 # NOTE (the #318 poisoned-process class): the Psych error-name aliases
@@ -102,29 +107,27 @@ end
 # Optional C-API materializer (TODO.restructure/22): fused visit →
 # Ruby objects via the Ruby C API. Feature-detected — LoadError leaves
 # the FFI ladder (Marshal → columns → records) as the sole path.
-# One bundle per Ruby minor (the leptris-ruby #207/#227 lesson: a PE
-# DLL must bind its build Ruby's runtime; a unix bundle is also
-# minor-locked by the internal API it compiles against). The MINOR
-# lives in the DIRECTORY (lib/yeptris/<minor>/native.<ext>) and the
-# FILE name stays unversioned: ruby derives the init symbol from the
-# feature basename, so native-3.4.so asked for the untypeable
-# "Init_native-3" and the versioned-file scheme could never load
-# (#157 — every shipped bundle was dead code). Dev checkouts keep
-# the plain native.<ext> name (mkmf layout, built for the running
-# Ruby). A missing cell falls back LOUDLY to the ladder.
+#
+# The per-minor DOT-FREE bundle is the org native-layer contract
+# (leptris-ruby#671; adopted by yeptris-ruby#409):
+# `lib/yeptris/native_<major>_<minor>.<ext>`, one bundle per Ruby
+# minor (the #207/#227 lesson: a PE DLL must bind its build Ruby's
+# runtime; a unix bundle is minor-locked by the internal API it
+# compiles against). MRI derives the init symbol from the feature
+# basename cut at the first dot, so native_3_4.so resolves
+# Init_native_3_4 (the dotted native-3.4.so name asked for the
+# untypeable "Init_native-3" and could never load, #157).
+# NO unversioned fallback, ever: a bundle built by any other minor is
+# a wrong-ABI load (the compiled-in RString layout changed in 3.2 —
+# the 3.1 segfault class); an absent variant falls back to the ladder
+# with the #217 opt-in notice.
+minor = RUBY_VERSION[/\A\d+\.\d+/].tr(".", "_")
 begin
-  # per-minor FIRST: a single version-agnostic native.so loads under
-  # ANY Ruby and is an ABI gamble across minors — Ruby 3.0 ran a
-  # 3.3-built ext and the JSON parse failed.
-  require "yeptris/#{RUBY_VERSION[/\A\d+\.\d+/]}/native"
-rescue LoadError
-  begin
-    require "yeptris/native"
-  rescue LoadError => e
-    if Yeptris.debug? # the require chain is top-level (self = main)
-      warn "yeptris: no precompiled native materializer for Ruby " \
-           "#{RUBY_VERSION[/\A\d+\.\d+/]} on this platform " \
-           "(#{e.message}); the FFI ladder carries the load"
-    end
+  require "yeptris/native_#{minor}"
+rescue LoadError => e
+  if Yeptris.debug? # the require chain is top-level (self = main)
+    warn "yeptris: no native_#{minor} materializer bundle for Ruby " \
+         "#{RUBY_VERSION[/\A\d+\.\d+/]} on this platform " \
+         "(#{e.message}); the FFI ladder carries the load"
   end
 end

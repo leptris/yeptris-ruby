@@ -9,21 +9,77 @@ module Yeptris
   module FFI
     extend ::FFI::Library
 
-    begin
-      ffi_lib [
+    # The FFI candidate order is the org native-layer contract
+    # (leptris-ruby#671; adopted by yeptris-ruby#409): ONE list, shared
+    # by every face that loads the library — two differently-pathed
+    # copies load as two images with split per-document state (the
+    # two-images law), so nothing else may keep its own resolution
+    # list. Order:
+    #   1. ENV["YEPTRIS_LIB_PATH"] — an explicit full path (or directory)
+    #   2. the vendored tree: lib/yeptris/vendor/<platform>/libyeptris.<ext>
+    #   3. this suite's flat layout: the gem root beside lib/ (where the
+    #      platform gems vendor the engine — the contract's flat-lib slot)
+    #   4. system paths (/usr/local/lib)
+    #   5. the bare soname (the system linker search, last)
+    # A missing library raises with the NAMED REMEDY below — never a
+    # bare LoadError.
+    VENDOR_DARWIN_TAGS = %w[arm64-darwin x86_64-darwin].freeze
+    # glibc before musl — dlopen falls through on musl hosts; the
+    # running arch first.
+    VENDOR_LINUX_TAGS = %w[aarch64-linux x86_64-linux aarch64-linux-musl
+                           x86_64-linux-musl].freeze
+
+    def self.vendor_platform_tags
+      plat = RUBY_PLATFORM.to_s
+      if plat !~ /java/
+        if plat =~ /darwin/
+          return VENDOR_DARWIN_TAGS
+        elsif plat =~ /linux/
+          cpu = plat[/\A(aarch64|x86_64)/] || RbConfig::CONFIG["host_cpu"].to_s
+          mine, other = VENDOR_LINUX_TAGS.partition { |t| t.start_with?(cpu) }
+          return mine + other
+        end
+        return [] # windows: no vendor tree; the DLL vendors at the gem root
+      end
+      # JVM engines report "x86_64-java" or bare "java" — the OS (and
+      # sometimes the arch) is lost; rebuild cpu-os from RbConfig so
+      # the vendored binaries resolve there too (the leptris-ruby
+      # zero-setup JRuby shape).
+      host_os = RbConfig::CONFIG["host_os"].to_s
+      return [] if host_os =~ /mingw|mswin|windows/
+
+      cpu = RbConfig::CONFIG["host_cpu"].to_s
+      cpu = "aarch64" if cpu.empty?
+      os = host_os =~ /darwin/ ? "darwin" : "linux"
+      if os == "darwin"
+        VENDOR_DARWIN_TAGS
+      else
+        mine, other = VENDOR_LINUX_TAGS.partition { |t| t.start_with?(cpu) }
+        mine + other
+      end
+    end
+
+    def self.libleptris_candidates
+      ext = RUBY_PLATFORM =~ /darwin/ ? ".dylib" : (RUBY_PLATFORM =~ /windows|mingw|mswin/ ? ".dll" : ".so")
+      vendored = vendor_platform_tags.map do |tag|
+        File.expand_path("vendor/#{tag}/libyeptris#{ext}", __dir__)
+      end
+      [
         ENV["YEPTRIS_LIB_PATH"],
-        File.expand_path("../../libyeptris.dylib", __dir__),
-        File.expand_path("../../libyeptris.so", __dir__),
-        File.expand_path("../../libyeptris.dll", __dir__),
-        "/usr/local/lib/libyeptris.dylib",
-        "/usr/local/lib/libyeptris.so",
+        *vendored,
+        File.expand_path("../../libyeptris#{ext}", __dir__),
+        "/usr/local/lib/libyeptris#{ext}",
         "yeptris",
       ].compact
+    end
+
+    begin
+      ffi_lib libleptris_candidates
     rescue LoadError => e
       raise LoadError, <<~MSG
         yeptris: cannot load the libyeptris library.
-        Set YEPTRIS_LIB_PATH to a libyeptris.{so,dylib,dll}, or vendor
-        the library next to the gem's lib/ directory.
+        Set YEPTRIS_LIB_PATH to a libyeptris.{so,dylib,dll}, or use the
+        platform gem that vendors it next to the gem's lib/ directory.
         (Underlying error: #{e.message})
       MSG
     end
@@ -126,6 +182,13 @@ module Yeptris
     attach_function :yeptris_parse_json_tape, %i[pointer size_t pointer], :int
     attach_function :yeptris_tape_free, [:pointer], :void
     attach_function :yeptris_tape_convert, %i[pointer size_t size_t pointer pointer], :size_t
+    # the lenient route (engine 0.6.9+, the simdjson deferred contract)
+    # and the interleaved-records column materializer (engine 0.6.34+):
+    # feature-detected — TAPE gates the Ruby face's friendly error.
+    attach_function :yeptris_parse_json_tape_lenient, %i[pointer size_t pointer], :int
+    attach_function :yeptris_tape_columns, [:pointer], :int
+    TAPE_LENIENT = !(@missing ||= []).include?(:yeptris_parse_json_tape_lenient)
+    TAPE_COLUMNS = !(@missing ||= []).include?(:yeptris_tape_columns)
 
     # the compiled plan walk (#293 / TODO.restructure/87): compile a
     # strict-JSON spec once, apply it to a parsed tape in one C pass,
@@ -211,6 +274,47 @@ module Yeptris
     attach_function :yeptris_recorder_records, %i[pointer pointer], :pointer
     attach_function :yeptris_recorder_arena, %i[pointer pointer], :pointer
     attach_function :yeptris_recorder_free, [:pointer], :void
+
+    # ---- the pull / iterparse face (events.h; TODO.impl/12) ----
+    # The zero C->host-dispatch consumption models: pull hands out the
+    # whole stream event-by-event (bulk batches over
+    # yeptris_pull_next_batch — one FFI crossing per batch, never per
+    # event); iterparse yields one document's slice per call, memory
+    # bounded by the largest document. Event strings ride the owning
+    # model's arena and are valid UNTIL THE NEXT CALL — the binding
+    # materializes plain Event values at every crossing, so nothing
+    # borrowed escapes. Absent on older libraries: the @missing stubs
+    # raise at use, and EVENTS gates the friendly message.
+    typedef :pointer, :yeptris_pull
+    typedef :pointer, :yeptris_iterparse
+
+    # yeptris_event (events.h): ABI-frozen field order — five ints,
+    # three (ptr, len) span pairs, four marks.
+    class CEvent < ::FFI::Struct
+      layout :type, :int,
+             :style, :int,
+             :flow, :int,
+             :explicit_marker, :int,
+             :implicit, :int,
+             :value, :pointer, :value_len, :size_t,
+             :anchor, :pointer, :anchor_len, :size_t,
+             :tag, :pointer, :tag_len, :size_t,
+             :line, :uint32, :col, :uint32,
+             :end_line, :uint32, :end_col, :uint32
+    end
+
+    attach_function :yeptris_pull_new, %i[pointer size_t], :yeptris_pull
+    attach_function :yeptris_pull_next, [:yeptris_pull], :pointer
+    attach_function :yeptris_pull_next_batch, %i[yeptris_pull pointer size_t], :size_t
+    attach_function :yeptris_pull_status, %i[yeptris_pull pointer pointer], :yeptris_status
+    attach_function :yeptris_pull_free, [:yeptris_pull], :void
+    attach_function :yeptris_iterparse_new, %i[pointer size_t], :yeptris_iterparse
+    attach_function :yeptris_iterparse_next, %i[yeptris_iterparse pointer], :pointer
+    attach_function :yeptris_iterparse_status, %i[yeptris_iterparse pointer pointer], :yeptris_status
+    attach_function :yeptris_iterparse_free, [:yeptris_iterparse], :void
+    EVENTS = !(@missing ||= []).include?(:yeptris_pull_new) &&
+             !(@missing ||= []).include?(:yeptris_pull_next_batch) &&
+             !(@missing ||= []).include?(:yeptris_iterparse_next)
 
     # value stream (TODO.impl/15 phase F): one drain of pre-converted
     # typed values — the materialization fast path

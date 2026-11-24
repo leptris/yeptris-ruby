@@ -23,7 +23,7 @@ require "yeptris"
 assert_eq(Yeptris::VERSION, expected, "version")
 
 spec = Gem.loaded_specs["yeptris"]
-if spec && Dir.glob(File.join(spec.gem_dir, "lib", "yeptris", "native.{bundle,so}")).any?
+if spec && Dir.glob(File.join(spec.gem_dir, "lib", "yeptris", "native_*.{bundle,so,dll}")).any?
   # a platform gem carries the bundle: it MUST activate (a silent
   # fallback would ship the perf win dead — the libruby-link bug)
   raise "SMOKE FAIL native bundle shipped but not loaded" unless defined?(::Yeptris::Native)

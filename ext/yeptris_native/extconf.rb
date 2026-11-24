@@ -92,7 +92,32 @@ else
       ($INSTALLFILES ||= []) << [lib, "$(RUBYARCHDIR)/yeptris"]
     end
     $CFLAGS << " -O3 -fvisibility=hidden" unless RUBY_PLATFORM =~ /mswin|mingw/
-    create_makefile("yeptris/native")
+    # The per-minor DOT-FREE artifact (the org native-layer contract,
+    # leptris-ruby#671 / yeptris-ruby#409): a source install must
+    # produce the per-minor name itself — the loader requires
+    # yeptris/native_<major>_<minor> and deliberately has NO
+    # unversioned fallback (loading a bundle built by another minor is
+    # the wrong-ABI 3.1 segfault class). MRI derives Init_native_<maj>_<min>
+    # from the same basename — exported by yeptris_native.c and pinned
+    # in the Windows .def below.
+    minor_us = RUBY_VERSION[/\A\d+\.\d+/].tr(".", "_")
+    if RUBY_PLATFORM =~ /mswin|mingw/
+      # PE DLLs export only what a .def or dllexport names (yeptris_native.c
+      # dllexports the entry points; the explicit .def keeps the table
+      # certain when the toolchain's auto-generated def would win with
+      # the wrong list — the leptris-ruby #227 shape).
+      def_path = File.expand_path("native_exports.def", __dir__)
+      File.write(def_path, <<~DEF)
+        EXPORTS
+        Init_native
+        Init_native_3_3
+        Init_native_3_4
+        Init_native_4_0
+      DEF
+      win_def = " #{def_path.tr('/', '\\\\')}"
+      $DLDFLAGS << win_def unless $DLDFLAGS.include?("native_exports.def")
+    end
+    create_makefile("yeptris/native_#{minor_us}")
   else
     write_dummy_makefile("yeptris: materializer link probe failed; the FFI ladder carries the load")
   end

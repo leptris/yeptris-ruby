@@ -398,7 +398,7 @@ jobs:
       #   libyeptris.so:                 x86_64 2.14 (the memcpy bump —
       #     "loads everywhere nokogiri does"), aarch64 2.17 (the
       #     port's baseline; aarch64 support landed in glibc 2.17)
-      #   lib/yeptris/<minor>/native.so: 2.17 on both (clock_gettime
+      #   lib/yeptris/native_<maj>_<min>.so: 2.17 on both (clock_gettime
       #     moved librt->libc at 2.17; every supported Ruby minor
       #     needs 2.17+ itself, so a higher bind would silently drop
       #     those hosts onto the FFI ladder)
@@ -432,7 +432,7 @@ jobs:
           while IFS= read -r so; do
             max=$(strings "$so" | grep -oE 'GLIBC_2\.[0-9]+' | sort -uV | tail -1 || true)
             case "$so" in
-              */native.so) floor=$NATIVE_FLOOR; n_native=$((n_native + 1)) ;;
+              */native_*.so) floor=$NATIVE_FLOOR; n_native=$((n_native + 1)) ;;
               *)           floor=$ENGINE_FLOOR; n_engine=$((n_engine + 1)) ;;
             esac
             if [ -z "$max" ]; then
@@ -446,7 +446,7 @@ jobs:
             fi
           done < <(find /tmp/gate-glibc -name '*.so')
           if [ "$n_engine" -lt 1 ] || [ "$n_native" -lt 1 ]; then
-            echo "::error::gate found no libyeptris.so / per-minor native.so in the gem (yeptris-ruby #404)"
+            echo "::error::gate found no libyeptris.so / per-minor native_<maj>_<min>.so in the gem (yeptris-ruby #404)"
             rc=1
           fi
           exit $rc
@@ -890,7 +890,7 @@ jobs:
             tar xzf /tmp/pm/data.tar.gz -C /tmp/pm
             missing=""
             for m in $expected; do
-              [ -f "/tmp/pm/lib/yeptris/$m/native.so" ] || missing="$missing $m"
+              [ -f "/tmp/pm/lib/yeptris/native_${m//./_}.so" ] || missing="$missing $m"
             done
             if [ -n "$missing" ]; then
               echo "::error::$name missing per-minor bundles:$missing (ruby#399)"

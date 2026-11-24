@@ -20,7 +20,8 @@ RSpec.describe "scripts/audit_gem_doctrine.rb (#169)" do
       60.times { |i| files << "vendor/libyeptris/src/f#{i}.c" }
     end
     files << "ext/libyeptris/extconf.rb" if with_ext && !with_source
-    files << "lib/yeptris/native-3.4.so" if with_binary
+    # the contract's per-minor DOT-FREE flat name (leptris-ruby#671)
+    files << "lib/yeptris/native_3_4.so" if with_binary
     files << "lib/libyeptris.dylib" if with_binary && platform.to_s.include?("darwin")
     files.each do |f|
       path = File.join(dir, f)

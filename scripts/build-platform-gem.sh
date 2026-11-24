@@ -10,6 +10,10 @@ set -euo pipefail
 V="${1:?version required (X.Y.Z)}"
 RUBY_REPO="${2:?ruby repo URL required}"
 WORK="${3:-$(mktemp -d)}"
+# this leg's Ruby minor, DOT-FREE: the native bundle's name rides it
+# (native_<maj>_<min>.<ext> — the org native-layer contract)
+MINOR="$(ruby -e 'print RUBY_VERSION[/\A\d+\.\d+/]')"
+MINOR_US="${MINOR//./_}"
 
 IS_WINDOWS=0
 if uname -s | grep -qi 'MINGW\|MSYS\|CYGWIN'; then
@@ -170,9 +174,11 @@ if [ "$IS_WINDOWS" = "1" ]; then
 else
   make LIBRUBYARG_SHARED= LIBRUBYARG_STATIC= DLDFLAGS="$DLD $EXTRA"
 fi
-otool -L native.bundle 2>/dev/null | grep -q libruby && { echo "ERROR: libruby still referenced"; exit 1; }
+BUNDLE="native_${MINOR_US}.so"
+[ -f "$BUNDLE" ] || BUNDLE="native_${MINOR_US}.bundle"
+otool -L "$BUNDLE" 2>/dev/null | grep -q libruby && { echo "ERROR: libruby still referenced"; exit 1; }
 if [ "$IS_WINDOWS" != "1" ]; then
-  ldd native.so 2>/dev/null | grep -q libruby && { echo "ERROR: libruby still referenced"; exit 1; } || true
+  ldd "$BUNDLE" 2>/dev/null | grep -q libruby && { echo "ERROR: libruby still referenced"; exit 1; } || true
 fi
 echo "::endgroup::"
 
@@ -180,21 +186,20 @@ if [ "$IS_WINDOWS" = "1" ]; then
   # the per-Ruby-minor native bundles (the #207/#227 lesson): the
   # workflow builds them under each minor BEFORE this script runs —
   # refuse a Windows gem with none (the loud FFI fallback is per-minor
-  # acceptable, never wholesale). MINOR rides in the DIRECTORY, the
-  # file name stays native.* (ruby derives Init_<basename> from the
-  # feature — the old native-<minor>.so name asked for the untypeable
-  # "Init_native-3", #157); the packaging Ruby's own minor rides too
-  # (the workflow's per-minor steps cover the OTHERS; this build binds
-  # this Ruby's runtime). find, not ls|wc: pipefail aborts the
-  # assignment when ls matches nothing (the sixth leg run died at the
-  # verify with the gem fully built)
-  MINOR=$(ruby -e 'print RUBY_VERSION[/\A\d+\.\d+/]')
-  mkdir -p "../../lib/yeptris/$MINOR"
-  cp native.so "../../lib/yeptris/$MINOR/native.so"
+  # acceptable, never wholesale). Per-minor DOT-FREE flat names (the
+  # org native-layer contract, leptris-ruby#671): the minor lives in
+  # the FILE name, native_<maj>_<min>.dll, whose basename resolves the
+  # Init_native_<maj>_<min> entry point (the dotted form asked for the
+  # untypeable "Init_native-3", #157); the packaging Ruby's own minor
+  # rides too (the workflow's per-minor steps cover the OTHERS; this
+  # build binds this Ruby's runtime). find, not ls|wc: pipefail aborts
+  # the assignment when ls matches nothing (the sixth leg run died at
+  # the verify with the gem fully built)
+  cp "$BUNDLE" "../../lib/yeptris/native_${MINOR_US}.so"
   echo "::group::Verify Windows native bundles"
-  count=$(find ../../lib/yeptris -mindepth 2 -maxdepth 2 -name 'native.*' 2>/dev/null | wc -l)
+  count=$(find ../../lib/yeptris -maxdepth 1 -name 'native_*.*' 2>/dev/null | wc -l)
   if [ "$count" -lt 1 ]; then
-    echo "ERROR: no lib/yeptris/<minor>/native.* staged (expected the workflow's per-minor builds)"
+    echo "ERROR: no lib/yeptris/native_<maj>_<min>.* staged (expected the workflow's per-minor builds)"
     exit 1
   fi
   echo "native bundles staged: $count"
@@ -202,8 +207,9 @@ if [ "$IS_WINDOWS" = "1" ]; then
 fi
 
 echo "::group::Stage and build the platform gem"
-EXT=native.so
-[ -f "$EXT" ] || EXT=native.bundle
+EXT="$BUNDLE"
+SUF=".so"
+[ "${EXT%.so}" != "$EXT" ] || SUF=".bundle"
 cd "$WORK/yeptris-ruby"
 # ffi.rb vendors at the GEM ROOT (../../ from lib/yeptris); on
 # Windows the MSVC DLL arrives as yeptris.dll and vendors AS
@@ -216,16 +222,15 @@ fi
 if [ "$IS_WINDOWS" = "1" ]; then
   cp "ext/yeptris_native/$EXT" "lib/yeptris/$EXT"
 else
-  # POSIX stages per-minor: the loader must never run an ext built
-  # for a different Ruby minor (3.0 loading the 3.3 build = the
-  # JSON ParseError). MINOR rides in the DIRECTORY, the file name
-  # stays native.* (ruby derives Init_<basename> from the feature —
-  # the old native-<minor>.so name asked for the untypeable
-  # "Init_native-3" and could never load, #157). Dev checkouts keep
-  # the plain native.so name at lib/yeptris/.
-  MINOR="$(ruby -e 'print RUBY_VERSION[/\A\d+\.\d+/]')"
-  mkdir -p "lib/yeptris/$MINOR"
-  cp "ext/yeptris_native/$EXT" "lib/yeptris/$MINOR/$EXT"
+  # POSIX stages per-minor, DOT-FREE flat names (the org native-layer
+  # contract, leptris-ruby#671): the loader must never run an ext
+  # built for a different Ruby minor (3.0 loading the 3.3 build = the
+  # JSON ParseError), and the minor rides in the FILE name —
+  # native_<maj>_<min>.<ext>, whose basename resolves the
+  # Init_native_<maj>_<min> entry point (the dotted form asked for
+  # the untypeable "Init_native-3" and could never load, #157). No
+  # unversioned fallback exists.
+  cp "ext/yeptris_native/$EXT" "lib/yeptris/$EXT"
   # ruby#399 publication contract: the gem tree must carry the
   # complete per-minor bundle set before packaging — a missing minor
   # silently locks that Ruby's hosts onto the FFI ladder (0.6.73.0's
@@ -239,10 +244,10 @@ else
     expected="${YEPTRIS_EXPECTED_MINORS:-$(cat "$SSOT")}"
     missing=""
     for m in $expected; do
-      [ -f "lib/yeptris/$m/$EXT" ] || missing="$missing $m"
+      [ -f "lib/yeptris/native_${m//./_}${SUF}" ] || missing="$missing $m"
     done
     if [ -n "$missing" ]; then
-      echo "ERROR: incomplete per-minor set — missing:$missing (expected lib/yeptris/<minor>/$EXT for:$expected; ruby#399)" >&2
+      echo "ERROR: incomplete per-minor set — missing:$missing (expected lib/yeptris/native_<maj>_<min>${SUF} for:$expected; ruby#399)" >&2
       exit 1
     fi
     echo "per-minor set complete: $expected"

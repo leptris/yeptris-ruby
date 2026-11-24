@@ -106,18 +106,37 @@ benchmark of record — any performance claim runs through it.
 ....
 cd ext/yeptris_native
 YEPTRIS_LIB_PATH=/path/to/libyeptris.dylib ruby extconf.rb && make
-cp native.bundle ../../lib/yeptris/   # or .so on Linux
+cp native_<maj>_<min>.bundle ../../lib/yeptris/   # or .so on Linux —
+                                                  # the extconf names
+                                                  # it per minor
 ....
 
 `require "yeptris"` picks it up automatically (`Yeptris::JSON` then
 uses it; missing builds silently use the fallback — the gem installs
-without compiling).
+without compiling). The bundle name is per-minor DOT-FREE
+(`native_<major>_<minor>.<ext>`, the org native-layer contract):
+the loader requires exactly `yeptris/native_<major>_<minor>` — a
+bundle built by another minor is never attempted.
 
 == Shipped beyond the original plan
 
 * The columnar value drain (bulk, pre-converted typed columns — the
   load fast path) and the bulk DOM builder (one `document_build`
   call per dump).
+* The events face (pull + iterparse) and the JSON tape view — the
+  zero-per-event-crossing consumption models and the columnar tape,
+  matching the C/rs/ts siblings:
+
+[source,ruby]
+----
+events = Yeptris::PullParser.new("a: 1\n---\nb: 2\n").each.to_a
+raise "events" unless events.first.kind == :stream_start
+slices = Yeptris::Iterparse.new("a: 1\n---\nb: 2\n").each_document.to_a
+raise "iterparse" unless slices.size == 3
+tape = Yeptris::JSON::Tape.parse('{"a": [1, 2.5, "x"]}')
+raise "tape" unless tape.int_at(4) == 1 && tape.string_at(6) == "x"
+----
+
 * **Ruby Marshal 4.8 emission** (libyeptris >= 0.1.11): the C side
   converts value records into Marshal bytes; one `Marshal.load`
   materializes the whole graph. ~10× faster than the columnar walk

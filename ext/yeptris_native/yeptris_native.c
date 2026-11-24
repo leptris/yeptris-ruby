@@ -465,7 +465,17 @@ static void native_self_check(void) {
     }
 }
 
-RUBY_FUNC_EXPORTED void Init_native(void) {
+/* The per-minor DOT-FREE entry points (the org native-layer contract,
+ * leptris-ruby#671 / yeptris-ruby#409): MRI derives the init symbol
+ * from the require feature's basename cut at the first dot, so
+ * native_3_4.so resolves Init_native_3_4. One entry per
+ * SUPPORTED_MINORS member (3.3, 3.4, 4.0 — add one alongside the
+ * SUPPORTED_MINORS line when a new minor joins). Init_native itself
+ * stays exported for a direct require "yeptris/native" (dev muscle
+ * memory); the gem's loader NEVER falls back to it — a bundle built
+ * by another minor is a wrong-ABI load (the 3.1 RString-layout
+ * segfault class). */
+static void native_setup(void) {
     utf8_enc = rb_utf8_encoding();
     native_self_check();
     VALUE mYep = rb_define_module("Yeptris");
@@ -505,3 +515,10 @@ RUBY_FUNC_EXPORTED void Init_native(void) {
     const char* shape = getenv("YEPTRIS_NATIVE_SHAPE");
     if (shape != NULL && strcmp(shape, "natural") == 0) yep_rb_set_shape_mode(1);
 }
+
+RUBY_FUNC_EXPORTED void Init_native_3_3(void) { native_setup(); }
+RUBY_FUNC_EXPORTED void Init_native_3_4(void) { native_setup(); }
+RUBY_FUNC_EXPORTED void Init_native_4_0(void) { native_setup(); }
+/* Kept for the direct unversioned require only; see the contract note
+ * above — the gem's own loader never calls this one. */
+RUBY_FUNC_EXPORTED void Init_native(void) { native_setup(); }
