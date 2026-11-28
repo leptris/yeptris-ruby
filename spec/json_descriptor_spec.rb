@@ -3,6 +3,17 @@
 require "spec_helper"
 require "yeptris/json"
 
+# The engine emits one row for a scalar-map leaf since the fix that
+# landed with v0.6.93 (leptris/yeptris-ruby#430); older engines
+# returned rows=0 for the single-record shape. The probe skips them.
+def json_descriptor_scalar_map_rows?
+  d = ::Yeptris::JSON::Descriptor.build(kind: :map, path: %w[db],
+                                        children: [{ name: "v", kind: :int }])
+  d.walk('{"db":{"v":1}}').rows == 1
+rescue ::Yeptris::JSON::Error
+  false
+end
+
 # The Descriptor plan walk (#293 slice two): a row shape compiled
 # once, applied in one native pass — differential against JSON.load
 # (the rows assembled from columns must equal the parsed document
@@ -115,5 +126,76 @@ RSpec.describe "Yeptris::JSON::Descriptor" do
     expect(result.column("id")).to eq(items.map { |i| i["id"] })
     expect(result.column("name")).to eq(items.map { |i| i["name"] })
     expect(result.column("score")).to eq(items.map { |i| i["score"] })
+  end
+
+  # The single-record shape (leptris/yeptris-ruby#430): a map-kind
+  # walk whose path leaf is a MAP OF SCALARS emits ONE row — the
+  # record's own pairs are the fields. Serialbench's canonical config
+  # face (headers, settings blocks) rides this form.
+  describe "the scalar-map leaf: one row for a single record", if: json_descriptor_scalar_map_rows? do
+    let(:config_json) do
+      '{"config":{"database":{"host":"localhost","port":5432,"name":"myapp",' \
+        '"user":"admin","password":"secret"}}}'
+    end
+
+    let(:config_desc) do
+      Yeptris::JSON::Descriptor.build(
+        kind: :map, path: ["config", "database"],
+        children: [
+          { name: "host", kind: :str }, { name: "port", kind: :int },
+          { name: "name", kind: :str }, { name: "user", kind: :str },
+          { name: "password", kind: :str },
+        ]
+      )
+    end
+
+    it "emits one populated row for the record (the #430 repro)" do
+      result = config_desc.walk(config_json)
+      expect(result.rows).to eq(1)
+      expect(result.names).to eq(%w[host port name user password])
+      expect(result.at(0)).to eq("host" => "localhost", "port" => 5432, "name" => "myapp",
+                                 "user" => "admin", "password" => "secret")
+      expect(result.at(1)).to be_nil
+    end
+
+    it "the typed columns expose the record's values" do
+      result = config_desc.walk(config_json)
+      expect(result.column("host")).to eq(["localhost"])
+      expect(result.column("port")).to eq([5432])
+      expect(result.column("password")).to eq(["secret"])
+    end
+
+    it "the array-leaf contrast stays rows-per-element" do
+      doc = '{"dataset":{"records":[{"id":1},{"id":2},{"id":3}]}}'
+      desc = Yeptris::JSON::Descriptor.build(kind: :map, path: %w[dataset records],
+                                             children: [{ name: "id", kind: :int }])
+      expect(desc.walk(doc).rows).to eq(3)
+    end
+
+    it "the seq-kind contrast: rows over a seq root still enumerate" do
+      doc = '[{"v":1},{"v":2},{"v":3}]'
+      seq_desc = Yeptris::JSON::Descriptor.build(kind: :seq, children: [{ name: "v", kind: :int }])
+      expect(seq_desc.walk(doc).rows).to eq(3)
+    end
+
+    it "missing, nested, and null leaves stay null; later fields still fill" do
+      doc = '{"db":{"host":"h","tls":{"deep":9},"port":5432,"gone":null}}'
+      desc = Yeptris::JSON::Descriptor.build(kind: :map, path: "db",
+                                             children: [
+                                               { name: "host", kind: :str },
+                                               { name: "tls", kind: :str },
+                                               { name: "port", kind: :int },
+                                               { name: "gone", kind: :str },
+                                             ])
+      result = desc.walk(doc)
+      expect(result.rows).to eq(1)
+      expect(result.at(0)).to eq("host" => "h", "tls" => nil, "port" => 5432, "gone" => nil)
+    end
+
+    it "an empty leaf container is zero rows, not a null row" do
+      desc = Yeptris::JSON::Descriptor.build(kind: :map, path: "db",
+                                             children: [{ name: "host", kind: :str }])
+      expect(desc.walk('{"db":{}}').rows).to eq(0)
+    end
   end
 end
