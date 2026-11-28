@@ -3,6 +3,17 @@
 require "spec_helper"
 require "yeptris"
 
+# The DOM leg emits one row for a scalar-map leaf since the fix that
+# landed with v0.6.93 (leptris/yeptris-ruby#430); older engines
+# returned rows=0 for the single-record shape. The probe skips them.
+def yaml_descriptor_scalar_map_rows?
+  d = ::Yeptris::YAML::Descriptor.build(kind: :map, path: %w[db],
+                                        children: [{ name: "v", kind: :int }])
+  d.walk("db:\n  v: 1\n").rows == 1
+rescue ::Yeptris::JSON::Error
+  false
+end
+
 # The YAML leg of the Descriptor plan walk (#293 slice three): the
 # same compiled row shape applied to block YAML — differential
 # against Yeptris::YAML.load restricted to the planned leaves.
@@ -139,5 +150,61 @@ RSpec.describe "Yeptris::YAML::Descriptor" do
     expect(result.column("id")).to eq(items.map { |i| i["id"] })
     expect(result.column("name")).to eq(items.map { |i| i["name"] })
     expect(result.column("score")).to eq(items.map { |i| i["score"] })
+  end
+
+  # The single-record shape (leptris/yeptris-ruby#430): a map-kind
+  # walk whose path leaf is a MAP OF SCALARS emits ONE row — the
+  # record's own pairs are the fields.
+  describe "the scalar-map leaf: one row for a single record", if: yaml_descriptor_scalar_map_rows? do
+    it "emits one populated row for the block record" do
+      yaml = <<~YAML
+        config:
+          database:
+            host: localhost
+            port: 5432
+            name: myapp
+      YAML
+      desc = Yeptris::YAML::Descriptor.build(kind: :map, path: %w[config database],
+                                             children: [
+                                               { name: "host", kind: :str },
+                                               { name: "port", kind: :int },
+                                               { name: "name", kind: :str },
+                                             ])
+      result = desc.walk(yaml)
+      expect(result.rows).to eq(1)
+      expect(result.at(0)).to eq("host" => "localhost", "port" => 5432, "name" => "myapp")
+    end
+
+    it "nested leaves stay null and later fields still fill" do
+      yaml = <<~YAML
+        db:
+          host: h
+          tls:
+            enabled: true
+          port: 5432
+      YAML
+      desc = Yeptris::YAML::Descriptor.build(kind: :map, path: "db",
+                                             children: [
+                                               { name: "host", kind: :str },
+                                               { name: "tls", kind: :str },
+                                               { name: "port", kind: :int },
+                                             ])
+      result = desc.walk(yaml)
+      expect(result.rows).to eq(1)
+      expect(result.at(0)).to eq("host" => "h", "tls" => nil, "port" => 5432)
+    end
+
+    it "the mapping-values contrast stays rows-per-value" do
+      yaml = <<~YAML
+        items:
+          first:
+            id: 1
+          second:
+            id: 2
+      YAML
+      desc = Yeptris::YAML::Descriptor.build(kind: :map, path: "items",
+                                             children: [{ name: "id", kind: :int }])
+      expect(desc.walk(yaml).rows).to eq(2)
+    end
   end
 end
